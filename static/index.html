@@ -312,6 +312,14 @@ body::after {
   padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 14px;
 }
 .evt:last-child { border-bottom: none; }
+.evt.clk { cursor: pointer; transition: background .15s; }
+.evt.clk:hover { background: rgba(79,214,255,.06); }
+/* Brief flash on the event a user jumped to from the activity log. */
+.mlist li.evt-highlight { border-radius: 6px; animation: evtflash 2s ease; }
+@keyframes evtflash {
+  0%   { background: rgba(230,196,115,.35); box-shadow: 0 0 0 1px rgba(230,196,115,.55) inset; }
+  100% { background: transparent; box-shadow: none; }
+}
 .evt .ts  { font-family: "Share Tech Mono"; font-size: 11px; color: var(--cyan); }
 .evt .lvl { width: 6px; height: 6px; border-radius: 50%; align-self: center; }
 .lvl-flash { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
@@ -1010,8 +1018,11 @@ body::after {
       if (e.status === 'awaiting_approval')     msg += ' &mdash; <span style="color:var(--gold)">AWAITING APPROVAL</span>';
       if (e.status === 'approved')              msg += ' &mdash; <span class="ok">APPROVED</span>';
       if (e.status === 'declined')              msg += ' &mdash; <span class="fail">DECLINED</span>';
+      var rowAttrs = e.agent
+        ? 'class="evt clk" data-log-agent="' + esc(e.agent) + '" data-log-evtid="' + esc(evtKey(e)) + '"'
+        : 'class="evt"';
       html +=
-        '<div class="evt">' +
+        '<div ' + rowAttrs + '>' +
           '<div class="ts">'  + fmtTime(e.ts) + '</div>' +
           '<div class="lvl '  + (e.level === 'flash' ? 'lvl-flash' : 'lvl-info') + '"></div>' +
           '<div class="ag">'  + esc(e.agent || '') + '</div>' +
@@ -1137,6 +1148,31 @@ body::after {
       .catch(function () { promptNote('res-err', 'Network error sending prompt.'); });
   }
 
+  // Stable-ish key for an event (its id, else ts|action). Used to link an
+  // activity-log row to the same event inside the agent modal.
+  function evtKey(e) {
+    if (!e) return '';
+    if (e.id != null && e.id !== '') return String(e.id);
+    return (e.ts || '') + '|' + (e.action || '');
+  }
+
+  // Briefly flash the matching event inside the open agent modal.
+  function highlightAgentEvent(key) {
+    var lis = document.querySelectorAll('.mlist li[data-evtid]');
+    for (var i = 0; i < lis.length; i++) {
+      if (lis[i].getAttribute('data-evtid') === key) {
+        var li = lis[i];
+        try { li.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        catch (_) { li.scrollIntoView(); }
+        li.classList.remove('evt-highlight');
+        void li.offsetWidth;            // restart the animation if re-clicked
+        li.classList.add('evt-highlight');
+        setTimeout(function () { li.classList.remove('evt-highlight'); }, 2000);
+        return;
+      }
+    }
+  }
+
   // ── Agent modal ────────────────────────────────────────────────────────────
   function openModalAgent(agentName) {
     MODAL_AGENT = agentName;
@@ -1194,7 +1230,7 @@ body::after {
       html += '<ul class="mlist">';
       history.slice(0, 15).forEach(function (e) {
         var stCls = statusBadgeCls(e.status);
-        html += '<li>' +
+        html += '<li data-evtid="' + esc(evtKey(e)) + '">' +
           '<span class="ts-sm">' + fmtDateTime(e.ts) + '</span>' +
           '<span class="st-badge ' + stCls + '">' + esc(e.status) + '</span>' +
           '<b>' + esc(e.action || '') + '</b>' +
@@ -1630,6 +1666,14 @@ body::after {
       if (act === 'approve')       { submitDecision('approve'); return; }
       if (act === 'decline')       { submitDecision('decline'); return; }
       if (act === 'submit-revise') { submitDecision('revise', MODAL_APPR.revised, MODAL_APPR.reason); return; }
+      return;
+    }
+    // Activity-log row → open that agent's modal and flash the clicked event.
+    var logEl = e.target.closest('[data-log-evtid]');
+    if (logEl) {
+      MODAL_BACK = null;
+      openModalAgent(logEl.getAttribute('data-log-agent'));
+      highlightAgentEvent(logEl.getAttribute('data-log-evtid'));
       return;
     }
     // Agent row inside the usage modal → open that agent stacked over usage.
