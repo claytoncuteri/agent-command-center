@@ -1,0 +1,52 @@
+# Personal config — never commit
+config.json
+
+# Event files generated locally
+events.jsonl
+examples/events.jsonl
+
+# Correction log — human edits / training signal, never commit
+corrections.jsonl
+examples/corrections.jsonl
+
+# Reference-mode draft files (demo writes here)
+drafts/
+
+# Custom logo assets (use config.logo to point at them locally)
+logo.*
+*.logo.*
+local_logo.*
+
+# Virtual environment
+.venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+env/
+
+# Environment files
+.env
+.env.*
+
+# macOS
+.DS_Store
+*.swp
+*.swo
+
+# Editor
+.idea/
+.vscode/
+*.orig
+
+# Claude Code local settings (personal, machine-specific — never commit)
+.claude/settings.local.json

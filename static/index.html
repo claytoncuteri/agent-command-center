@@ -1,0 +1,1722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Agent Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600;700&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #05070f;
+  --panel: rgba(14,20,38,.72);
+  --panel2: rgba(18,26,48,.55);
+  --cyan: #4fd6ff;
+  --cyan-dim: #2a7fa0;
+  --gold: #e6c473;
+  --gold-dim: #8c7333;
+  --indigo: #8f83ff;
+  --green: #4fe6a6;
+  --red: #ff6b6b;
+  --text: #d6e8f7;
+  --muted: #7690ab;
+  --line: rgba(90,150,190,.16);
+  color-scheme: dark;
+}
+
+/* Themed scrollbars — thin dark/cyan, never the default white/gray */
+* { scrollbar-width: thin; scrollbar-color: var(--cyan-dim) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: rgba(10,16,30,.5); }
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(var(--cyan-dim), #1c5a72);
+  border-radius: 6px; border: 2px solid rgba(10,16,30,.5);
+}
+::-webkit-scrollbar-thumb:hover { background: var(--cyan); }
+::-webkit-scrollbar-corner { background: transparent; }
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Rajdhani", system-ui, sans-serif;
+}
+body {
+  min-height: 100vh;
+  padding: 18px 14px 60px;
+  position: relative;
+  overflow-x: hidden;
+  background:
+    radial-gradient(900px 500px at 82% -8%, rgba(79,214,255,.10), transparent 60%),
+    radial-gradient(760px 480px at 10% 12%, rgba(143,131,255,.10), transparent 60%),
+    radial-gradient(700px 700px at 50% 120%, rgba(230,196,115,.06), transparent 60%),
+    var(--bg);
+}
+body::before {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 0;
+  background-image:
+    linear-gradient(rgba(90,150,190,.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(90,150,190,.05) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask: radial-gradient(circle at 50% 30%, #000, transparent 85%);
+  mask: radial-gradient(circle at 50% 30%, #000, transparent 85%);
+}
+body::after {
+  content: "";
+  position: fixed; inset: 0; pointer-events: none; z-index: 1; opacity: .35;
+  background: repeating-linear-gradient(0deg, rgba(0,0,0,0) 0 3px, rgba(0,0,0,.18) 3px 4px);
+}
+.wrap { max-width: 1000px; margin: 0 auto; position: relative; z-index: 2; }
+
+/* ── Panel ── */
+.panel {
+  background: linear-gradient(180deg, var(--panel), var(--panel2));
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  position: relative;
+  box-shadow: 0 0 0 1px rgba(0,0,0,.3) inset, 0 18px 40px -24px rgba(0,0,0,.8);
+  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(6px);
+}
+.panel::before, .panel::after {
+  content: "";
+  position: absolute; width: 12px; height: 12px;
+  border: 2px solid var(--cyan); opacity: .5;
+}
+.panel::before { top: -1px; left: -1px; border-right: none; border-bottom: none; border-radius: 14px 0 0 0; }
+.panel::after  { bottom: -1px; right: -1px; border-left: none; border-top: none; border-radius: 0 0 14px 0; }
+
+/* ── Clickable panels ── */
+.clickable { cursor: pointer; transition: transform .15s, box-shadow .15s; }
+.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 0 0 1px rgba(79,214,255,.28) inset, 0 0 28px -10px rgba(79,214,255,.55);
+}
+
+/* ── Header ── */
+.cmd {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 20px;
+  align-items: center;
+  padding: 20px 22px;
+  margin-bottom: 14px;
+}
+.emblem { width: 100px; height: 100px; flex: none; filter: drop-shadow(0 0 16px rgba(230,196,115,.4)); }
+.emblem svg { width: 100%; height: 100%; display: block; }
+.ring-outer { transform-origin: 60px 60px; animation: spin 34s linear infinite; }
+.ring-mid   { transform-origin: 60px 60px; animation: spin 22s linear infinite reverse; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.brand h1 {
+  font-family: "Orbitron"; font-weight: 900; font-size: 28px;
+  letter-spacing: 5px; line-height: 1;
+  background: linear-gradient(90deg, #fff, var(--cyan) 55%, var(--indigo));
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+}
+.brand .sub {
+  font-family: "Orbitron"; font-weight: 500; font-size: 11px;
+  letter-spacing: 7px; color: var(--gold); margin-top: 6px;
+}
+.brand .greet { margin-top: 10px; font-size: 16px; color: var(--muted); font-weight: 500; }
+
+.clock { text-align: right; font-family: "Share Tech Mono", monospace; }
+.clock .t { font-size: 30px; color: var(--cyan); letter-spacing: 2px; text-shadow: 0 0 16px rgba(79,214,255,.5); }
+.clock .d { font-size: 12px; color: var(--muted); letter-spacing: 2px; margin-top: 2px; }
+.sys-status {
+  margin-top: 9px; display: inline-flex; align-items: center; gap: 7px;
+  font-size: 11px; letter-spacing: 2px; color: var(--green);
+  border: 1px solid rgba(79,230,166,.4); border-radius: 20px;
+  padding: 4px 11px; background: rgba(79,230,166,.07);
+}
+.sys-status.connecting { color: var(--muted); border-color: rgba(118,144,171,.4); background: rgba(118,144,171,.07); }
+.sys-status.error      { color: var(--red);   border-color: rgba(255,107,107,.4); background: rgba(255,107,107,.07); }
+.clk-btn {
+  margin-bottom: 6px; font-family: "Share Tech Mono", monospace;
+  font-size: 10px; letter-spacing: 1px; color: var(--muted);
+  background: none; border: 1px solid var(--line); border-radius: 6px;
+  padding: 3px 9px; cursor: pointer;
+}
+.clk-btn:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+.opt { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--text); cursor: pointer; }
+.opt input { accent-color: var(--cyan); }
+.clk-select {
+  width: 100%; margin-top: 4px; background: rgba(79,214,255,.04); color: var(--text);
+  border: 1px solid var(--cyan-dim); border-radius: 8px; padding: 9px 11px;
+  font-family: "Rajdhani", system-ui, sans-serif; font-size: 14px;
+}
+.clk-select:focus { outline: none; border-color: var(--cyan); }
+.sugg-row { display: flex; flex-wrap: wrap; gap: 7px; margin: 4px 0 10px; }
+.sugg {
+  cursor: pointer; text-align: left; font-family: "Rajdhani", system-ui, sans-serif;
+  font-size: 12px; color: var(--cyan); background: rgba(79,214,255,.06);
+  border: 1px solid var(--line); border-radius: 14px; padding: 5px 11px;
+}
+.sugg:hover { color: #fff; border-color: var(--cyan-dim); background: rgba(79,214,255,.12); }
+.dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: currentColor; box-shadow: 0 0 8px currentColor;
+  animation: pulse 3s infinite;
+}
+@keyframes pulse { 0%,100% { opacity:1; transform:scale(1); } 50% { opacity:.45; transform:scale(.8); } }
+
+/* ── Approvals ── */
+.approve {
+  padding: 13px 20px; margin-bottom: 14px;
+  border-color: rgba(230,196,115,.45);
+  background: linear-gradient(180deg, rgba(230,196,115,.10), rgba(230,196,115,.03));
+  animation: goldglow 3.5s ease-in-out infinite;
+}
+@keyframes goldglow {
+  0%,100% { box-shadow: 0 0 0 1px rgba(230,196,115,.12) inset, 0 0 22px -8px rgba(230,196,115,.4); }
+  50%     { box-shadow: 0 0 0 1px rgba(230,196,115,.25) inset, 0 0 34px -6px rgba(230,196,115,.65); }
+}
+.approve::before, .approve::after { border-color: var(--gold); }
+.approve .lbl {
+  font-family: "Orbitron"; font-size: 12px; letter-spacing: 3px; color: var(--gold);
+  display: flex; align-items: center; gap: 9px; margin-bottom: 10px;
+}
+.approve .lbl .warn { width: 9px; height: 9px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 10px var(--gold); animation: pulse 1.4s infinite; }
+.appr-item {
+  cursor: pointer;
+  display: flex; justify-content: space-between; align-items: center; gap: 12px;
+  font-size: 14px; color: var(--text);
+  padding: 9px 11px; border-radius: 8px;
+  border: 1px solid rgba(230,196,115,.18);
+  transition: background .15s;
+}
+.appr-item:hover { background: rgba(230,196,115,.08); }
+.appr-item + .appr-item { margin-top: 8px; }
+.appr-item .appr-agent { color: var(--cyan); font-weight: 700; font-family: "Orbitron"; font-size: 11px; letter-spacing: 1px; white-space: nowrap; }
+.appr-item .appr-action { color: var(--text); flex: 1; margin-left: 10px; }
+.appr-item .appr-detail { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.appr-item .appr-arrow  { color: var(--gold); font-size: 16px; flex: none; }
+
+/* ── Stats bar ── */
+.tele { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+.stat { padding: 14px 16px; }
+.stat .k { font-size: 10px; letter-spacing: 2px; color: var(--muted); font-weight: 600; }
+.stat .v { font-family: "Share Tech Mono", monospace; font-size: 24px; color: var(--text); margin-top: 6px; }
+.stat .v small { font-size: 13px; color: var(--muted); }
+.stat .feed-tag { font-size: 10px; letter-spacing: 1px; color: var(--muted); margin-top: 6px; }
+.stat.cyan   .v { color: var(--cyan); }
+.stat.gold   .v { color: var(--gold); }
+.stat.indigo .v { color: var(--indigo); }
+
+/* ── Usage ── */
+.usage { padding: 16px 18px; margin-bottom: 14px; }
+.usage .uhead {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 13px; flex-wrap: wrap; gap: 6px;
+}
+.usage .uhead .k { font-family: "Orbitron"; font-size: 12px; letter-spacing: 4px; color: var(--cyan); }
+.usage .uhead .hint { font-size: 11px; color: var(--gold); letter-spacing: 1px; }
+.meters { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+.meter .ml {
+  display: flex; justify-content: space-between;
+  font-size: 11px; letter-spacing: 1px; color: var(--muted); margin-bottom: 5px;
+}
+.meter .ml b { color: var(--text); font-family: "Share Tech Mono"; }
+.track { height: 7px; border-radius: 4px; background: rgba(255,255,255,.06); overflow: hidden; }
+.fill  { height: 100%; border-radius: 4px; transition: width .6s ease; }
+.fill.c { background: linear-gradient(90deg, var(--cyan), #2a7fa0); }
+.fill.g { background: linear-gradient(90deg, var(--gold), #8c7333); }
+.fill.i { background: linear-gradient(90deg, var(--indigo), #4a3fa0); }
+.fill.r { background: linear-gradient(90deg, var(--red), #a03030); }
+.meter .rs { font-size: 10px; color: var(--muted); margin-top: 4px; letter-spacing: 1px; }
+
+/* ── Section title ── */
+.sec-title {
+  font-family: "Orbitron"; font-size: 13px; letter-spacing: 5px; color: var(--cyan);
+  margin: 20px 4px 6px;
+  display: flex; align-items: center; gap: 12px;
+}
+.sec-title::after { content: ""; flex: 1; height: 1px; background: linear-gradient(90deg, var(--cyan-dim), transparent); }
+.sec-title .cnt { font-family: "Share Tech Mono"; font-size: 12px; color: var(--muted); letter-spacing: 1px; }
+.hintline { font-size: 12px; color: var(--muted); letter-spacing: 1px; margin: 0 4px 12px; }
+
+/* ── Agent grid ── */
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.agent { padding: 16px 16px 14px; border-left: 3px solid var(--muted); }
+.agent.active  { border-left-color: var(--green); }
+.agent.standby { border-left-color: var(--gold); }
+.agent.idle    { border-left-color: var(--cyan-dim); }
+.agent.failed  { border-left-color: var(--red); }
+
+.agent .top { display: flex; justify-content: space-between; align-items: baseline; }
+.agent .cs  { font-family: "Orbitron"; font-weight: 700; font-size: 17px; letter-spacing: 2px; color: var(--text); }
+.agent .role { font-size: 12px; color: var(--muted); letter-spacing: 1px; margin-top: 2px; }
+
+.badge {
+  font-size: 10px; letter-spacing: 2px; font-weight: 700;
+  padding: 3px 8px; border-radius: 20px;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.badge i { width: 7px; height: 7px; border-radius: 50%; }
+.b-active  { color: var(--green);  background: rgba(79,230,166,.1); }
+.b-active i  { background: var(--green);  box-shadow: 0 0 7px var(--green);  animation: pulse 2s infinite; }
+.b-standby { color: var(--gold);   background: rgba(230,196,115,.1); }
+.b-standby i { background: var(--gold); box-shadow: 0 0 7px var(--gold); animation: pulse 1.4s infinite; }
+.b-idle    { color: var(--muted);  background: rgba(118,144,171,.1); }
+.b-idle i    { background: var(--muted); }
+.b-failed  { color: var(--red);    background: rgba(255,107,107,.1); }
+.b-failed i  { background: var(--red); box-shadow: 0 0 7px var(--red); }
+
+.agent .now { margin-top: 12px; font-size: 14px; color: var(--text); min-height: 38px; }
+.agent .now .lab { display: block; font-size: 9px; letter-spacing: 2px; color: var(--cyan); margin-bottom: 3px; }
+.bar {
+  height: 5px; border-radius: 3px; background: rgba(79,214,255,.10);
+  overflow: hidden; position: relative; margin-top: 10px;
+}
+.bar::after {
+  content: ""; position: absolute; top: 0; bottom: 0; left: 0;
+  width: 38%; border-radius: 3px;
+  background: linear-gradient(90deg, transparent, var(--cyan) 45%, var(--indigo) 60%, transparent);
+  transform: translateX(-120%);
+  animation: sweep 1.5s ease-in-out infinite;
+}
+@keyframes sweep { to { transform: translateX(340%); } }
+
+.agent .last {
+  margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--muted);
+}
+.agent .last b   { color: var(--text); font-weight: 600; }
+.agent .last .ts { font-family: "Share Tech Mono"; color: var(--cyan); font-size: 11px; }
+.agent .foot2 {
+  margin-top: 9px;
+  display: flex; justify-content: space-between; align-items: center;
+  font-family: "Share Tech Mono"; font-size: 11px; color: var(--muted);
+}
+.agent .foot2 span { color: var(--gold); }
+.agent .foot2 .go  { color: var(--cyan); font-size: 15px; }
+.empty-agents {
+  grid-column: 1 / -1; text-align: center;
+  padding: 40px 20px; color: var(--muted); font-size: 14px; letter-spacing: 1px;
+}
+
+/* ── Activity log ── */
+.log { padding: 8px 4px 6px; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 2px; color: var(--green); }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2.8s infinite; }
+.evt {
+  display: grid;
+  grid-template-columns: 58px 6px 80px 1fr;
+  gap: 10px; align-items: baseline;
+  padding: 9px 14px; border-bottom: 1px solid var(--line); font-size: 14px;
+}
+.evt:last-child { border-bottom: none; }
+.evt .ts  { font-family: "Share Tech Mono"; font-size: 11px; color: var(--cyan); }
+.evt .lvl { width: 6px; height: 6px; border-radius: 50%; align-self: center; }
+.lvl-flash { background: var(--gold); box-shadow: 0 0 6px var(--gold); }
+.lvl-info  { background: var(--cyan-dim); }
+.evt .ag  { font-family: "Orbitron"; font-size: 10px; letter-spacing: 1px; color: var(--gold); }
+.evt .msg { color: var(--text); }
+.ok   { color: var(--green); font-weight: 700; }
+.fail { color: var(--red);   font-weight: 700; }
+.empty-log { text-align: center; padding: 30px; color: var(--muted); font-size: 13px; letter-spacing: 1px; }
+
+/* ── Footer ── */
+.foot { text-align: center; margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line); }
+.motto {
+  font-family: "Orbitron"; font-size: 13px; letter-spacing: 8px; color: var(--gold);
+  background: linear-gradient(90deg, var(--gold-dim), var(--gold) 50%, var(--gold-dim));
+  -webkit-background-clip: text; background-clip: text;
+}
+.foot .sm { font-size: 11px; color: var(--muted); letter-spacing: 1px; margin-top: 8px; }
+.foot .sm b { color: var(--cyan); }
+.foot .credit { font-size: 11px; color: var(--muted); letter-spacing: 1px; margin-top: 6px; opacity: .85; }
+.foot .credit b { color: var(--gold); font-weight: 700; letter-spacing: 1.5px; }
+
+/* ── Modal ── */
+.overlay {
+  position: fixed; inset: 0; z-index: 50;
+  background: rgba(3,6,14,.74);
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  display: none; align-items: flex-end; justify-content: center; padding: 0;
+}
+.overlay.open { display: flex; }
+.modal {
+  width: 100%; max-width: 560px; max-height: 88vh;
+  /* Scroll lives on the body, not the whole card, so the header and the
+     rounded gold rim stay put and the scrollbar sits inside the frame. */
+  overflow: hidden;
+  display: flex; flex-direction: column;
+  border: 1px solid rgba(79,214,255,.4);
+  border-radius: 18px 18px 0 0;
+  background: linear-gradient(180deg, rgba(17,24,46,.99), rgba(9,13,27,.99));
+  box-shadow: 0 -10px 60px -10px rgba(79,214,255,.35);
+  animation: slideup .28s ease;
+}
+@keyframes slideup { from { transform: translateY(40px); opacity: .4; } to { transform: none; opacity: 1; } }
+.mhead {
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 18px 20px 12px; border-bottom: 1px solid var(--line);
+  flex: none;
+  background: linear-gradient(180deg, rgba(17,24,46,.99), rgba(15,21,40,.96));
+}
+.mhead .mt { font-family: "Orbitron"; font-size: 18px; letter-spacing: 3px; color: var(--text); }
+.mhead .ms { font-size: 12px; color: var(--muted); letter-spacing: 1px; margin-top: 4px; }
+.mclose {
+  background: none; border: 1px solid var(--line); color: var(--muted);
+  width: 32px; height: 32px; border-radius: 8px; font-size: 18px;
+  cursor: pointer; flex: none; line-height: 1;
+}
+.mclose:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+.mback {
+  background: none; border: 1px solid var(--line); color: var(--muted);
+  width: 32px; height: 32px; border-radius: 8px; font-size: 20px;
+  cursor: pointer; flex: none; line-height: 1; margin-right: 10px;
+}
+.mback:hover { color: var(--cyan); border-color: var(--cyan-dim); }
+.mbody { padding: 16px 20px 22px; overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+
+/* Modal internals */
+.mlab {
+  font-size: 10px; letter-spacing: 2px; color: var(--cyan);
+  margin: 14px 0 8px; font-weight: 700;
+}
+.mlab:first-child { margin-top: 0; }
+.mtext { font-size: 14px; color: var(--text); line-height: 1.5; }
+.mtext.muted { color: var(--muted); }
+.mlist { list-style: none; margin: 4px 0; }
+.mlist li {
+  font-size: 13px; color: var(--muted);
+  padding: 7px 0 7px 16px; position: relative;
+  border-bottom: 1px solid var(--line);
+}
+.mlist li::before { content: "\25B9"; position: absolute; left: 0; color: var(--cyan); }
+.mlist li:last-child { border-bottom: none; }
+.mlist li b { color: var(--text); }
+.mlist li .ts-sm { font-family: "Share Tech Mono"; font-size: 10px; color: var(--cyan); margin-right: 6px; }
+.mlist li .st-badge {
+  font-size: 9px; letter-spacing: 1px; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; margin-right: 5px; vertical-align: middle;
+}
+.st-started   { background: rgba(79,230,166,.15);  color: var(--green); }
+.st-finished  { background: rgba(79,230,166,.15);  color: var(--green); }
+.st-failed    { background: rgba(255,107,107,.15); color: var(--red); }
+.st-awaiting  { background: rgba(230,196,115,.15); color: var(--gold); }
+.st-approved  { background: rgba(79,230,166,.15);  color: var(--green); }
+.st-declined  { background: rgba(255,107,107,.15); color: var(--red); }
+.st-other     { background: rgba(118,144,171,.10); color: var(--muted); }
+
+.detail-box {
+  background: rgba(79,214,255,.04);
+  border: 1px solid var(--line); border-radius: 10px;
+  padding: 11px 13px; font-size: 13.5px; color: var(--text);
+  line-height: 1.55; white-space: pre-wrap; margin: 8px 0;
+}
+.detail-box .cap {
+  font-size: 10px; letter-spacing: 1px; color: var(--gold);
+  margin-bottom: 6px; white-space: normal; font-weight: 700;
+}
+.appr-id-display {
+  font-family: "Share Tech Mono"; font-size: 11px; color: var(--muted);
+  margin-top: 5px; word-break: break-all;
+}
+
+/* Read-only button row */
+.btn-row { display: flex; gap: 10px; margin-top: 16px; flex-wrap: wrap; }
+.btn {
+  font-family: "Rajdhani"; font-weight: 700; font-size: 12px; letter-spacing: 1px;
+  padding: 8px 14px; border-radius: 8px; cursor: pointer; white-space: nowrap; flex: none;
+}
+.btn-approve { border: 1px solid rgba(79,230,166,.5);  background: rgba(79,230,166,.08);  color: var(--green); }
+.btn-revise  { border: 1px solid var(--cyan-dim);      background: rgba(79,214,255,.07);  color: var(--cyan);  }
+.btn-decline { border: 1px solid rgba(255,107,107,.4); background: rgba(255,107,107,.07); color: var(--red);   }
+/* Filled green — the single primary action. Exactly one visible at a time. */
+.btn-primary {
+  border: 1px solid var(--green);
+  background: linear-gradient(180deg, #5cf0b0, #2fae7d);
+  color: #04231a; font-weight: 700;
+  box-shadow: 0 0 18px -6px rgba(79,230,166,.7);
+}
+.btn-primary:hover { filter: brightness(1.07); }
+/* Muted outline — safe/neutral (e.g. revert). Never red, never green. */
+.btn-neutral { border: 1px solid var(--line); background: rgba(118,144,171,.08); color: var(--muted); }
+.btn-neutral:hover { color: var(--text); border-color: var(--muted); filter: none; }
+.btn:hover { filter: brightness(1.2); }
+/* Lightweight re-enter-editing affordance on a content block. */
+.edit-link {
+  cursor: pointer; font-family: "Rajdhani", system-ui, sans-serif;
+  font-size: 11px; font-weight: 600; letter-spacing: .5px; color: var(--cyan);
+  border: 1px solid var(--line); border-radius: 6px; padding: 2px 9px; white-space: nowrap;
+}
+.edit-link:hover { color: #fff; border-color: var(--cyan-dim); background: rgba(79,214,255,.10); }
+.cap.cap-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.mlab.mlab-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.ro-note {
+  margin-top: 12px; padding: 9px 12px; border-radius: 8px;
+  background: rgba(230,196,115,.07); border: 1px solid rgba(230,196,115,.2);
+  font-size: 12px; color: var(--gold); letter-spacing: .5px; line-height: 1.5;
+}
+.appr-edit {
+  width: 100%; min-height: 120px; margin-top: 4px; resize: vertical;
+  background: rgba(79,214,255,.04); color: var(--text);
+  border: 1px solid var(--cyan-dim); border-radius: 10px;
+  padding: 11px 13px; font-family: "Rajdhani", system-ui, sans-serif;
+  font-size: 14px; line-height: 1.55;
+}
+.appr-edit:focus { outline: none; border-color: var(--cyan); }
+.appr-reason-lab {
+  display: block; margin: 12px 0 5px;
+  font-size: 10px; letter-spacing: 2px; color: var(--gold); font-weight: 700;
+}
+.appr-reason {
+  width: 100%; background: rgba(230,196,115,.05); color: var(--text);
+  border: 1px solid var(--gold-dim); border-radius: 8px;
+  padding: 9px 12px; font-family: "Rajdhani", system-ui, sans-serif; font-size: 14px;
+}
+.appr-reason:focus { outline: none; border-color: var(--gold); }
+.appr-reason::placeholder { color: var(--muted); opacity: .7; }
+.appr-result:empty { display: none; }
+.appr-result { margin-top: 4px; }
+.ro-note.res-pending { color: var(--cyan); border-color: var(--cyan-dim); background: rgba(79,214,255,.07); }
+.ro-note.res-ok   { color: var(--green); border-color: rgba(79,230,166,.4); background: rgba(79,230,166,.08); }
+.ro-note.res-info { color: var(--gold);  border-color: rgba(230,196,115,.4); background: rgba(230,196,115,.10); }
+.ro-note.res-neg  { color: var(--red);   border-color: rgba(255,107,107,.35); background: rgba(255,107,107,.06); }
+.ro-note.res-err  { color: var(--red);   border-color: rgba(255,107,107,.4); background: rgba(255,107,107,.08); }
+
+/* Revise/editing mode cue — subtle warm-gold accent shift */
+.modal.editing {
+  border-color: rgba(230,196,115,.6);
+  box-shadow: 0 -10px 60px -10px rgba(230,196,115,.5), 0 0 0 1px rgba(230,196,115,.28) inset;
+}
+.modal.editing .mhead {
+  background: linear-gradient(180deg, rgba(34,29,12,.99), rgba(26,22,10,.96));
+  border-bottom-color: rgba(230,196,115,.4);
+}
+.modal.editing .appr-edit {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 1px rgba(230,196,115,.25), 0 0 22px -10px rgba(230,196,115,.7);
+}
+.edit-flag {
+  display: inline-flex; align-items: center; gap: 7px; margin-bottom: 12px;
+  font-family: "Orbitron"; font-size: 10px; letter-spacing: 3px; color: var(--gold);
+  border: 1px solid rgba(230,196,115,.5); background: rgba(230,196,115,.10);
+  padding: 4px 11px; border-radius: 20px;
+}
+.edit-flag i { width: 8px; height: 8px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 8px var(--gold); animation: pulse 1.4s infinite; }
+
+/* Action toast — tone follows the action (approve = green, decline = red-tinted) */
+.toast {
+  position: fixed; left: 50%; bottom: 26px; z-index: 80;
+  transform: translateX(-50%) translateY(12px); opacity: 0;
+  padding: 11px 18px; border-radius: 10px; border: 1px solid;
+  font-family: "Rajdhani", system-ui, sans-serif; font-weight: 700;
+  font-size: 13px; letter-spacing: 1px; pointer-events: none;
+  -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  transition: opacity .25s ease, transform .25s ease;
+}
+.toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+.toast.ok  { color: var(--green); border-color: rgba(79,230,166,.5);  background: rgba(79,230,166,.14);  box-shadow: 0 0 26px -8px rgba(79,230,166,.6); }
+.toast.neg { color: var(--red);   border-color: rgba(255,107,107,.5); background: rgba(255,107,107,.14); box-shadow: 0 0 26px -8px rgba(255,107,107,.6); }
+
+/* Usage modal breakdown */
+.mbdrow {
+  display: grid; grid-template-columns: 90px 1fr 56px;
+  gap: 10px; align-items: center; margin: 9px 0; font-size: 13px;
+}
+.mbdrow .n { font-family: "Orbitron"; font-size: 10px; letter-spacing: 1px; color: var(--text); }
+.mbdrow .p { font-family: "Share Tech Mono"; color: var(--gold); text-align: right; font-size: 11px; }
+.mbdrow-click { cursor: pointer; border-radius: 8px; padding: 6px 8px; margin: 3px -8px; transition: background .15s; }
+.mbdrow-click:hover { background: rgba(79,214,255,.07); }
+
+/* ── Responsive ── */
+@media (min-width: 761px) {
+  .overlay { align-items: center; }
+  .modal { border-radius: 18px; }
+}
+@media (max-width: 760px) {
+  .cmd { grid-template-columns: 1fr; text-align: center; justify-items: center; gap: 14px; }
+  .clock { text-align: center; }
+  .tele { grid-template-columns: repeat(2, 1fr); }
+  .grid { grid-template-columns: 1fr; }
+  .brand h1 { font-size: 22px; letter-spacing: 3px; }
+  .evt { grid-template-columns: 52px 6px 64px 1fr; gap: 7px; font-size: 13px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- Header -->
+  <header class="panel cmd">
+    <div class="emblem" id="emblem"></div>
+    <div class="brand">
+      <h1 id="dashTitle">AGENT COMMAND CENTER</h1>
+      <div class="sub">MULTI-AGENT DASHBOARD</div>
+      <div class="greet" id="greet">Waiting for event stream&hellip;</div>
+    </div>
+    <div class="clock">
+      <div><button class="clk-btn" id="clockSettings" title="Clock format &amp; time zone" aria-label="Clock settings">&#9881; CLOCK</button></div>
+      <div class="t" id="clock">--:--:--</div>
+      <div class="d" id="dateLine">&nbsp;</div>
+      <div class="sys-status connecting" id="sysStatus"><span class="dot"></span><span id="sysLabel">CONNECTING</span></div>
+    </div>
+  </header>
+
+  <!-- Open approvals (hidden when empty) -->
+  <div id="approvalsSection"></div>
+
+  <!-- Stats bar -->
+  <div class="tele">
+    <div class="panel stat cyan"><div class="k">TASKS DONE</div><div class="v" id="statTasks">--</div><div class="feed-tag">finished events</div></div>
+    <div class="panel stat indigo"><div class="k">TOKENS</div><div class="v" id="statTokens">--</div><div class="feed-tag">session total</div></div>
+    <div class="panel stat"><div class="k">EVENTS</div><div class="v" id="statEvents">--</div><div class="feed-tag">in stream</div></div>
+    <div class="panel stat gold"><div class="k">AGENTS SEEN</div><div class="v" id="statAgents">--</div><div class="feed-tag">distinct names</div></div>
+  </div>
+
+  <!-- Usage meters — clickable -->
+  <div class="panel usage clickable" id="usagePanel">
+    <div class="uhead">
+      <div class="k" id="usageLabel">TOKEN USAGE &middot; SESSION</div>
+      <div class="hint" id="usageHint">&#9656; tap for per-agent breakdown</div>
+    </div>
+    <div class="meters" id="usageMeters">
+      <div style="color:var(--muted);font-size:13px;letter-spacing:1px">No token data yet.</div>
+    </div>
+  </div>
+
+  <!-- Agent cards — each gets data-agent for click delegation -->
+  <div class="sec-title">AGENTS <span class="cnt" id="agentCount">// 0</span></div>
+  <div class="hintline">Tap any card for detail and recent events from the stream.</div>
+  <div class="grid" id="agentGrid">
+    <div class="empty-agents">Waiting for agents&hellip;</div>
+  </div>
+
+  <!-- Activity log -->
+  <div class="sec-title">
+    ACTIVITY LOG
+    <span class="live" style="margin-left:auto"><i></i>LIVE</span>
+  </div>
+  <div class="panel log" id="activityLog">
+    <div class="empty-log">No events yet. Run <code>python examples/emit_demo.py</code> to populate.</div>
+  </div>
+
+  <!-- Footer -->
+  <div class="foot">
+    <div class="motto">IN SERVICE &middot; IN SPIRIT &middot; IN COMMAND</div>
+    <div class="sm">AGENT COMMAND CENTER &nbsp;|&nbsp; <b>open source</b> &middot; event-driven &middot; <span id="footMode">read-only</span></div>
+    <div class="credit">Designed &amp; built by <b>Clayton Cuteri</b> &middot; &copy; 2026 Clayton Cuteri</div>
+  </div>
+
+</div><!-- /wrap -->
+
+<!-- Modal overlay -->
+<div class="overlay" id="overlay">
+  <div class="modal" id="modalCard" role="dialog" aria-modal="true" aria-labelledby="mTitle">
+    <div class="mhead">
+      <button class="mback" id="mBack" aria-label="Back" style="display:none">&lsaquo;</button>
+      <div style="flex:1">
+        <div class="mt" id="mTitle"></div>
+        <div class="ms" id="mSub"></div>
+      </div>
+      <button class="mclose" id="mClose" aria-label="Close">&times;</button>
+    </div>
+    <div class="mbody" id="mBody"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ── State ──────────────────────────────────────────────────────────────────
+  var CFG = {
+    title: 'Agent Command Center',
+    logo: null,
+    billing_mode: 'max',
+    usage: { window_label: 'SESSION', reset_label: 'clears on page reload', tokens_max: null },
+    actions_mode: 'readonly',
+    actions_token: null,
+    content_mode: 'inline',
+    telegram_configured: false
+  };
+  var EVENTS = [];
+  var MODAL_APPR = null; // current approval being viewed (browser mode state)
+  var MODAL_BACK = null; // opener fn for the previous modal (one-level back), or null
+  var MODAL_AGENT = null; // agent name currently shown in the agent modal
+  var PALETTE = ['c','g','i','r'];
+
+  // Clock display prefs (persisted in localStorage). tz 'local' = browser zone.
+  var CLOCK = { tz: 'local', fmt: '24' };
+  try {
+    CLOCK.tz  = localStorage.getItem('acc_clock_tz')  || 'local';
+    CLOCK.fmt = localStorage.getItem('acc_clock_fmt') || '24';
+  } catch (_) {}
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+  fetch('/api/config')
+    .then(function (r) { return r.json(); })
+    .then(function (cfg) {
+      Object.assign(CFG, cfg);
+      if (cfg.usage) Object.assign(CFG.usage, cfg.usage);
+      applyConfig();
+    })
+    .catch(function () {})
+    .finally(function () { connectStream(); });
+
+  // ── Config ─────────────────────────────────────────────────────────────────
+  function applyConfig() {
+    document.title = CFG.title;
+    var el = document.getElementById('dashTitle');
+    if (el) el.textContent = CFG.title.toUpperCase();
+    var label = document.getElementById('usageLabel');
+    if (label) label.textContent = 'TOKEN USAGE \u00b7 ' + ((CFG.usage && CFG.usage.window_label) || 'SESSION');
+    var foot = document.getElementById('footMode');
+    if (foot) {
+      foot.textContent = CFG.actions_mode === 'both'     ? 'browser + telegram actions'
+                       : CFG.actions_mode === 'browser'  ? 'browser actions'
+                       : CFG.actions_mode === 'telegram' ? 'telegram actions'
+                       : 'read-only';
+    }
+    buildEmblem();
+  }
+
+  // ── Emblem ─────────────────────────────────────────────────────────────────
+  function buildEmblem() {
+    var rings =
+      '<g stroke="#8f83ff" stroke-width="1" fill="none" opacity=".28">' +
+        '<polygon points="60,20 95,80 25,80"/>' +
+        '<polygon points="60,100 25,40 95,40"/>' +
+      '</g>' +
+      '<g class="ring-outer">' +
+        '<circle cx="60" cy="60" r="54" fill="none" stroke="#e6c473" stroke-width="1.5" opacity=".8"/>' +
+        '<g stroke="#e6c473" stroke-width="2" opacity=".7">' +
+          '<line x1="60" y1="6" x2="60" y2="14"/>' +
+          '<line x1="60" y1="106" x2="60" y2="114"/>' +
+          '<line x1="6" y1="60" x2="14" y2="60"/>' +
+          '<line x1="106" y1="60" x2="114" y2="60"/>' +
+          '<line x1="22" y1="22" x2="27" y2="27"/>' +
+          '<line x1="98" y1="22" x2="93" y2="27"/>' +
+          '<line x1="22" y1="98" x2="27" y2="93"/>' +
+          '<line x1="98" y1="98" x2="93" y2="93"/>' +
+        '</g>' +
+      '</g>' +
+      '<g class="ring-mid">' +
+        '<circle cx="60" cy="60" r="45" fill="none" stroke="#4fd6ff" stroke-width="1.5" stroke-dasharray="4 7" opacity=".85"/>' +
+        '<circle cx="60" cy="15" r="2.6" fill="#4fd6ff"/>' +
+      '</g>';
+
+    var center;
+    if (CFG.logo) {
+      // User-supplied logo path from config.json (never committed)
+      center =
+        '<defs><clipPath id="lclip"><circle cx="60" cy="60" r="33"/></clipPath></defs>' +
+        '<image href="' + esc(CFG.logo) + '" x="27" y="27" width="66" height="66"' +
+        ' clip-path="url(#lclip)" preserveAspectRatio="xMidYMid slice"/>' +
+        '<circle cx="60" cy="60" r="33" fill="none" stroke="#e6c473" stroke-width="2" opacity=".9"/>';
+    } else {
+      // Default geometric emblem — no external images
+      center =
+        '<defs><radialGradient id="g-core" cx="50%" cy="45%" r="60%">' +
+          '<stop offset="0%" stop-color="#8fe9ff"/>' +
+          '<stop offset="55%" stop-color="#2b90b8"/>' +
+          '<stop offset="100%" stop-color="#0a2634"/>' +
+        '</radialGradient></defs>' +
+        '<circle cx="60" cy="60" r="34" fill="url(#g-core)" opacity=".9"/>' +
+        '<circle cx="60" cy="60" r="34" fill="none" stroke="#4fd6ff" stroke-width="1.5" opacity=".6"/>' +
+        '<text x="60" y="82" text-anchor="middle" font-size="48" fill="#e6c473"' +
+        ' style="font-family:\'Share Tech Mono\',serif">&#9822;</text>';
+    }
+
+    var el = document.getElementById('emblem');
+    if (el) {
+      el.innerHTML =
+        '<svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">' +
+        rings + center + '</svg>';
+    }
+  }
+  buildEmblem(); // render immediately before config loads
+
+  // ── Stream ─────────────────────────────────────────────────────────────────
+  function connectStream() {
+    var src = new EventSource('/api/stream');
+    src.onopen = function () { setStatus('live'); };
+    src.onmessage = function (e) {
+      try {
+        var evts = JSON.parse(e.data);
+        EVENTS = Array.isArray(evts) ? evts : [];
+        render();
+        setStatus('live');
+      } catch (_) {}
+    };
+    src.onerror = function () {
+      setStatus('error');
+      src.close();
+      // Polling fallback
+      (function poll() {
+        setTimeout(function () {
+          fetch('/api/events')
+            .then(function (r) { return r.json(); })
+            .then(function (evts) {
+              EVENTS = Array.isArray(evts) ? evts : [];
+              render();
+              setStatus('live');
+            })
+            .catch(function () { setStatus('error'); })
+            .finally(poll);
+        }, 3000);
+      }());
+    };
+  }
+
+  function setStatus(state) {
+    var el  = document.getElementById('sysStatus');
+    var lbl = document.getElementById('sysLabel');
+    if (!el || !lbl) return;
+    el.className = 'sys-status ' + state;
+    lbl.textContent = state === 'live' ? 'LIVE' : state === 'error' ? 'OFFLINE' : 'CONNECTING';
+  }
+
+  // ── Data helpers ───────────────────────────────────────────────────────────
+  function tsCompare(a, b) {
+    return (a || '') < (b || '') ? -1 : (a || '') > (b || '') ? 1 : 0;
+  }
+
+  function latestPerAgent(events) {
+    var map = {};
+    events.forEach(function (e) {
+      if (!e.agent) return;
+      if (!map[e.agent] || tsCompare(e.ts, map[e.agent].ts) > 0) map[e.agent] = e;
+    });
+    return map;
+  }
+
+  function historyPerAgent(events) {
+    var map = {};
+    events.forEach(function (e) {
+      if (!e.agent) return;
+      if (!map[e.agent]) map[e.agent] = [];
+      map[e.agent].push(e);
+    });
+    Object.keys(map).forEach(function (a) {
+      map[a].sort(function (x, y) { return tsCompare(y.ts, x.ts); });
+    });
+    return map;
+  }
+
+  function getOpenApprovals(events) {
+    var resolved = {};
+    events.forEach(function (e) {
+      if (e.approval_id && (e.status === 'approved' || e.status === 'declined')) {
+        resolved[e.approval_id] = true;
+      }
+    });
+    return events.filter(function (e) {
+      return e.status === 'awaiting_approval' && e.approval_id && !resolved[e.approval_id];
+    });
+  }
+
+  function tokensByAgent(events) {
+    var map = {};
+    events.forEach(function (e) {
+      if (!e.agent || !e.tokens) return;
+      map[e.agent] = (map[e.agent] || 0) + Number(e.tokens);
+    });
+    return map;
+  }
+
+  function fmtTime(ts) {
+    if (!ts) return '--:--';
+    try {
+      var d = new Date(ts);
+      return pad(d.getHours()) + ':' + pad(d.getMinutes());
+    } catch (_) { return (ts.slice(11, 16) || '--:--'); }
+  }
+
+  function fmtDateTime(ts) {
+    if (!ts) return '--';
+    try {
+      var d = new Date(ts);
+      return pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+    } catch (_) { return ts.slice(11, 19) || ts; }
+  }
+
+  function fmtTokens(n) {
+    if (n >= 1e6) return (n / 1e6).toFixed(2) + '<small>M</small>';
+    if (n >= 1e3) return (n / 1e3).toFixed(1) + '<small>K</small>';
+    return String(n);
+  }
+
+  // ── Status → display ───────────────────────────────────────────────────────
+  var STATUS_CLASS = {
+    started: 'active', awaiting_approval: 'standby', revised: 'standby',
+    finished: 'idle', approved: 'idle', declined: 'idle', idle: 'idle', info: 'idle', failed: 'failed'
+  };
+  var BADGE_CLASS  = { active: 'b-active', standby: 'b-standby', idle: 'b-idle', failed: 'b-failed' };
+  var BADGE_LABEL  = { active: 'ACTIVE',   standby: 'STANDBY',   idle: 'IDLE',   failed: 'FAILED'   };
+
+  function dispClass(status) { return STATUS_CLASS[status] || 'idle'; }
+
+  function statusBadgeCls(status) {
+    var map = {
+      started: 'st-started', finished: 'st-finished', failed: 'st-failed',
+      awaiting_approval: 'st-awaiting', approved: 'st-approved', declined: 'st-declined'
+    };
+    return map[status] || 'st-other';
+  }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
+  function render() {
+    var latestMap  = latestPerAgent(EVENTS);
+    var historyMap = historyPerAgent(EVENTS);
+    var approvals  = getOpenApprovals(EVENTS);
+    var tokMap     = tokensByAgent(EVENTS);
+
+    renderGreet(latestMap);
+    renderApprovals(approvals);
+    renderStats(latestMap, tokMap);
+    renderUsage(tokMap);
+    renderAgents(latestMap, historyMap);
+    renderLog();
+  }
+
+  function renderGreet(latestMap) {
+    var names  = Object.keys(latestMap);
+    var active = names.filter(function (n) { return dispClass(latestMap[n].status) === 'active'; });
+    var greet  = document.getElementById('greet');
+    if (!greet) return;
+    if (names.length === 0) { greet.textContent = 'Waiting for event stream\u2026'; return; }
+    greet.textContent = names.length + ' agent' + (names.length !== 1 ? 's' : '') + ' in stream' +
+      (active.length ? ' \u00b7 ' + active.length + ' active' : '') + '.';
+  }
+
+  function renderApprovals(approvals) {
+    var sec = document.getElementById('approvalsSection');
+    if (!sec) return;
+    if (!approvals.length) { sec.innerHTML = ''; return; }
+    var html = '<div class="panel approve"><div class="lbl"><span class="warn"></span>' +
+      approvals.length + ' ACTION' + (approvals.length !== 1 ? 'S' : '') + ' AWAIT SIGN-OFF</div>';
+    approvals.forEach(function (e) {
+      html +=
+        '<div class="appr-item" data-appr-id="' + esc(e.approval_id) + '">' +
+          '<span class="appr-agent">' + esc(e.agent) + '</span>' +
+          '<div class="appr-action">' +
+            esc(e.action || '') +
+            (e.detail ? '<div class="appr-detail">' + esc(e.detail) + '</div>' : '') +
+          '</div>' +
+          '<span class="appr-arrow">&rsaquo;</span>' +
+        '</div>';
+    });
+    html += '</div>';
+    sec.innerHTML = html;
+  }
+
+  function renderStats(latestMap, tokMap) {
+    var tasks  = EVENTS.filter(function (e) { return e.status === 'finished'; }).length;
+    var tokens = Object.values(tokMap).reduce(function (s, v) { return s + v; }, 0);
+    var el;
+    el = document.getElementById('statTasks');  if (el) el.textContent = tasks;
+    el = document.getElementById('statEvents'); if (el) el.textContent = EVENTS.length;
+    el = document.getElementById('statAgents'); if (el) el.textContent = Object.keys(latestMap).length;
+    el = document.getElementById('statTokens'); if (el) el.innerHTML = tokens > 0 ? fmtTokens(tokens) : '0';
+  }
+
+  function renderUsage(tokMap) {
+    var container = document.getElementById('usageMeters');
+    var hint      = document.getElementById('usageHint');
+    if (!container) return;
+    var entries = Object.entries(tokMap).sort(function (a, b) { return b[1] - a[1]; });
+    if (!entries.length) {
+      container.innerHTML = '<div style="color:var(--muted);font-size:13px;letter-spacing:1px">No token data yet.</div>';
+      if (hint) hint.textContent = '\u25b6 tap for per-agent breakdown';
+      return;
+    }
+    var maxTok    = entries[0][1];
+    var tokMax    = CFG.usage && CFG.usage.tokens_max ? Number(CFG.usage.tokens_max) : 0;
+    var resetText = CFG.usage ? (CFG.usage.reset_label || '') : '';
+    if (hint) hint.textContent = '\u25b6 tap for per-agent breakdown';
+    var html = '';
+    entries.forEach(function (entry, idx) {
+      var tok = entry[1];
+      var pct = tokMax > 0 ? Math.min(100, Math.round(tok / tokMax * 100)) : Math.round(tok / maxTok * 100);
+      var cls = PALETTE[idx % PALETTE.length];
+      html +=
+        '<div class="meter">' +
+          '<div class="ml"><span>' + esc(entry[0]) + '</span><b>' + pct + '%</b></div>' +
+          '<div class="track"><div class="fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+          '<div class="rs">' + fmtTokens(tok) + ' tok' + (resetText ? ' &middot; ' + esc(resetText) : '') + '</div>' +
+        '</div>';
+    });
+    container.innerHTML = html;
+  }
+
+  function renderAgents(latestMap, historyMap) {
+    var grid  = document.getElementById('agentGrid');
+    var count = document.getElementById('agentCount');
+    if (!grid) return;
+    var names = Object.keys(latestMap).sort();
+    if (count) count.textContent = '// ' + names.length + (names.length !== 1 ? ' AGENTS' : ' AGENT');
+    if (!names.length) { grid.innerHTML = '<div class="empty-agents">Waiting for agents\u2026</div>'; return; }
+    var html = '';
+    names.forEach(function (name) {
+      var latest    = latestMap[name];
+      var history   = historyMap[name] || [];
+      var dc        = dispClass(latest.status);
+      var bdgCls    = BADGE_CLASS[dc] || 'b-idle';
+      var bdgLbl    = BADGE_LABEL[dc] || 'IDLE';
+      var prev      = history.find(function (e) {
+        return e !== latest && (e.status === 'finished' || e.status === 'approved' || e.status === 'failed');
+      });
+      var taskCount = history.filter(function (e) { return e.status === 'finished'; }).length;
+      html +=
+        '<div class="panel agent clickable ' + dc + '" data-agent="' + esc(name) + '">' +
+          '<div class="top">' +
+            '<div>' +
+              '<div class="cs">' + esc(name) + '</div>' +
+              '<div class="role">' + esc(latest.category || '\u00a0') + '</div>' +
+            '</div>' +
+            '<div class="badge ' + bdgCls + '"><i></i>' + bdgLbl + '</div>' +
+          '</div>' +
+          '<div class="now">' +
+            '<span class="lab">CURRENT</span>' +
+            esc(latest.action || '') +
+            (latest.detail ? '<div style="font-size:12px;color:var(--muted);margin-top:3px">' + esc(latest.detail) + '</div>' : '') +
+            (dc === 'active' ? '<div class="bar"></div>' : '') +
+          '</div>' +
+          (prev
+            ? '<div class="last"><b>' + esc(prev.action || prev.result || '') + '</b>' +
+              (prev.result ? '<br><span style="font-size:12px;color:var(--muted)">' + esc(prev.result) + '</span>' : '') +
+              '<br><span class="ts">' + fmtTime(prev.ts) + '</span></div>'
+            : '<div class="last" style="color:var(--muted)">No prior completed task.</div>') +
+          '<div class="foot2"><div><span>' + taskCount + ' task' + (taskCount !== 1 ? 's' : '') + '</span></div><div class="go">&rsaquo;</div></div>' +
+        '</div>';
+    });
+    grid.innerHTML = html;
+  }
+
+  function renderLog() {
+    var container = document.getElementById('activityLog');
+    if (!container) return;
+    if (!EVENTS.length) {
+      container.innerHTML = '<div class="empty-log">No events yet. Run <code>python examples/emit_demo.py</code> to populate.</div>';
+      return;
+    }
+    var sorted = EVENTS.slice().sort(function (a, b) { return tsCompare(b.ts, a.ts); }).slice(0, 30);
+    var html = '';
+    sorted.forEach(function (e) {
+      var msg = esc(e.action || '');
+      if (e.status === 'finished' && e.result) msg += ' &mdash; <span class="ok">' + esc(e.result) + '</span>';
+      if (e.status === 'failed')               msg += ' &mdash; <span class="fail">FAILED</span>' + (e.detail ? ': ' + esc(e.detail) : '');
+      if (e.status === 'awaiting_approval')     msg += ' &mdash; <span style="color:var(--gold)">AWAITING APPROVAL</span>';
+      if (e.status === 'approved')              msg += ' &mdash; <span class="ok">APPROVED</span>';
+      if (e.status === 'declined')              msg += ' &mdash; <span class="fail">DECLINED</span>';
+      html +=
+        '<div class="evt">' +
+          '<div class="ts">'  + fmtTime(e.ts) + '</div>' +
+          '<div class="lvl '  + (e.level === 'flash' ? 'lvl-flash' : 'lvl-info') + '"></div>' +
+          '<div class="ag">'  + esc(e.agent || '') + '</div>' +
+          '<div class="msg">' + msg + '</div>' +
+        '</div>';
+    });
+    container.innerHTML = html;
+  }
+
+  // ── Modal system ───────────────────────────────────────────────────────────
+  var overlay = document.getElementById('overlay');
+
+  function openModal(title, sub, bodyHtml) {
+    document.getElementById('mTitle').textContent = title;
+    // sub may contain markup (e.g. a status badge); callers escape dynamic text.
+    document.getElementById('mSub').innerHTML     = sub;
+    document.getElementById('mBody').innerHTML    = bodyHtml;
+    var back = document.getElementById('mBack');
+    if (back) back.style.display = MODAL_BACK ? '' : 'none';
+    setEditing(false);
+    overlay.classList.add('open');
+  }
+
+  function closeModal() {
+    overlay.classList.remove('open');
+    setEditing(false);
+    MODAL_APPR = null;
+    MODAL_BACK = null;
+  }
+
+  // Toggle the modal's "live editing" accent shift.
+  function setEditing(on) {
+    var card = document.getElementById('modalCard');
+    if (card) card.classList.toggle('editing', !!on);
+  }
+
+  // Brief transient toast for a completed (wired) action.
+  function showToast(msg, kind) {
+    var t = document.getElementById('toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.id = 'toast';
+      document.body.appendChild(t);
+    }
+    t.className = 'toast ' + (kind === 'neg' ? 'neg' : 'ok');
+    t.textContent = msg;
+    void t.offsetWidth;           // reflow so the transition replays
+    t.classList.add('show');
+    clearTimeout(t._timer);
+    t._timer = setTimeout(function () { t.classList.remove('show'); }, 2600);
+  }
+
+  // Generic, no-hardcoded-names next-step suggestions for an agent.
+  function agentSuggestions(latest, history) {
+    var out = [], seen = {};
+    function add(s) { if (s && !seen[s]) { seen[s] = 1; out.push(s); } }
+    add('Run a status check and flag anything unusual.');
+    add('Summarize your recent activity.');
+    if (latest && latest.category) add('Start a new ' + latest.category + ' task.');
+    var lastDone = (history || []).find(function (e) { return e.status === 'finished' && e.action; });
+    if (lastDone) add('Repeat: ' + lastDone.action);
+    add('Pick up where you left off.');
+    return out.slice(0, 4);
+  }
+
+  // "Direct the agent" panel — suggestions + a prompt box. Sending is a write
+  // action, so it is gated to browser/both (Copy always works).
+  function agentPromptHtml(agentName, latest, history) {
+    var canSend = CFG.actions_mode === 'browser' || CFG.actions_mode === 'both';
+    var chips = agentSuggestions(latest, history).map(function (s) {
+      return '<button class="sugg" data-sugg="' + esc(s) + '">' + esc(s) + '</button>';
+    }).join('');
+    var controls = (canSend
+      ? '<button class="btn btn-primary" data-act="prompt-send">Send</button>'
+      : '') + '<button class="btn btn-neutral" data-act="prompt-copy">Copy</button>';
+    var note = canSend ? ''
+      : '<div class="ro-note res-info">Read-only view — enable browser/both action mode to send. You can still copy the text.</div>';
+    return '<div class="mlab">DIRECT THE AGENT</div>' +
+      '<div class="hintline" style="margin:0 0 6px">Tap a suggestion to fill the box, then edit and ' +
+        (canSend ? 'send.' : 'copy.') + '</div>' +
+      '<div class="sugg-row">' + chips + '</div>' +
+      '<textarea class="appr-edit" id="agentPrompt" placeholder="Type an instruction for ' +
+        esc(agentName) + '…"></textarea>' +
+      '<div class="btn-row">' + controls + '</div>' + note +
+      '<div class="appr-result" id="promptResult"></div>';
+  }
+
+  function promptNote(cls, msg) {
+    var r = document.getElementById('promptResult');
+    if (r) r.innerHTML = '<div class="ro-note ' + cls + '">' + esc(msg) + '</div>';
+  }
+  function copyAgentPrompt() {
+    var ta = document.getElementById('agentPrompt');
+    var text = ta ? ta.value.trim() : '';
+    if (!text) { promptNote('res-err', 'Nothing to copy — type or pick a suggestion first.'); return; }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text);
+      else { ta.select(); document.execCommand('copy'); }
+      showToast('Copied to clipboard', 'ok');
+    } catch (_) { showToast('Copy failed', 'neg'); }
+  }
+  function sendAgentPrompt() {
+    var ta = document.getElementById('agentPrompt');
+    var text = ta ? ta.value.trim() : '';
+    if (!text) { promptNote('res-err', 'Type a prompt (or pick a suggestion) first.'); return; }
+    promptNote('res-pending', 'Sending…');
+    fetch('/api/prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-ACC-Token': CFG.actions_token || '' },
+      body: JSON.stringify({ agent: MODAL_AGENT, prompt: text })
+    })
+      .then(function (r) { return r.json().catch(function () { return {}; }).then(function (b) { return { ok: r.ok, body: b }; }); })
+      .then(function (o) {
+        if (!o.ok) { promptNote('res-err', (o.body && o.body.detail) || 'Request failed.'); return; }
+        if (o.body && o.body.stub) {
+          promptNote('res-info', (o.body.message) ||
+            'Prompt recorded. Implement handle_prompt() in server.py to queue it.');
+          return;
+        }
+        showToast('Prompt sent to ' + (MODAL_AGENT || 'agent'), 'ok');
+        closeModal();
+      })
+      .catch(function () { promptNote('res-err', 'Network error sending prompt.'); });
+  }
+
+  // ── Agent modal ────────────────────────────────────────────────────────────
+  function openModalAgent(agentName) {
+    MODAL_AGENT = agentName;
+    var latestMap  = latestPerAgent(EVENTS);
+    var historyMap = historyPerAgent(EVENTS);
+    var latest  = latestMap[agentName];
+    if (!latest) return;
+    var history = historyMap[agentName] || [];
+    var dc      = dispClass(latest.status);
+    var bdgCls  = BADGE_CLASS[dc] || 'b-idle';
+    var bdgLbl  = BADGE_LABEL[dc] || 'IDLE';
+    var tokMap  = tokensByAgent(EVENTS);
+    var agentTok = tokMap[agentName] || 0;
+
+    var sub = '<span class="badge ' + bdgCls + '" style="vertical-align:middle"><i></i>' + bdgLbl + '</span>' +
+      (latest.category ? '  //  ' + esc(latest.category) : '') +
+      (agentTok ? '  //  ' + agentTok.toLocaleString() + ' tokens' : '');
+
+    var html = '';
+
+    // Current state
+    html += '<div class="mlab">CURRENT STATE</div>';
+    html += '<div class="mtext">' + esc(latest.action || '') + '</div>';
+    if (latest.detail) html += '<div class="mtext muted" style="margin-top:4px">' + esc(latest.detail) + '</div>';
+    if (latest.result) html += '<div class="mtext" style="margin-top:4px;color:var(--green)">' + esc(latest.result) + '</div>';
+
+    // Open approvals this agent is waiting on — respond right from here.
+    var openApprs = getOpenApprovals(EVENTS).filter(function (e) { return e.agent === agentName; });
+    if (openApprs.length) {
+      var canAct = CFG.actions_mode === 'browser' || CFG.actions_mode === 'both';
+      html += '<div class="mlab">AWAITING SIGN-OFF · ' + openApprs.length + '</div>';
+      openApprs.forEach(function (e) {
+        html += '<div class="appr-item" data-appr-id="' + esc(e.approval_id) + '">' +
+          '<div class="appr-action">' + esc(e.action || '') +
+            (e.detail ? '<div class="appr-detail">' + esc(e.detail) + '</div>' : '') +
+          '</div>' +
+          '<span class="appr-arrow">&rsaquo;</span>' +
+        '</div>';
+      });
+      html += '<div class="hintline" style="margin:8px 0 0">' +
+        (canAct
+          ? 'Tap an item to review and respond (approve / revise / decline).'
+          : 'Tap to review the full request. Enable an action mode in config to respond here.') +
+        '</div>';
+    }
+
+    // Direct-the-agent panel (suggestions + prompt box)
+    html += agentPromptHtml(agentName, latest, history);
+
+    // Recent events from stream (newest first, max 15)
+    html += '<div class="mlab">RECENT EVENTS FROM STREAM</div>';
+    if (history.length === 0) {
+      html += '<div class="mtext muted">No events.</div>';
+    } else {
+      html += '<ul class="mlist">';
+      history.slice(0, 15).forEach(function (e) {
+        var stCls = statusBadgeCls(e.status);
+        html += '<li>' +
+          '<span class="ts-sm">' + fmtDateTime(e.ts) + '</span>' +
+          '<span class="st-badge ' + stCls + '">' + esc(e.status) + '</span>' +
+          '<b>' + esc(e.action || '') + '</b>' +
+          (e.result ? ' &mdash; ' + esc(e.result) : '') +
+          (e.detail && !e.result ? ' &mdash; ' + esc(e.detail) : '') +
+          (e.tokens ? ' <span style="color:var(--muted);font-size:11px">[' + e.tokens.toLocaleString() + ' tok]</span>' : '') +
+        '</li>';
+      });
+      html += '</ul>';
+    }
+
+    openModal(agentName, sub, html);
+  }
+
+  // ── Usage modal ────────────────────────────────────────────────────────────
+  function openModalUsage() {
+    var tokMap  = tokensByAgent(EVENTS);
+    var entries = Object.entries(tokMap).sort(function (a, b) { return b[1] - a[1]; });
+    var total   = entries.reduce(function (s, e) { return s + e[1]; }, 0);
+    var tokMax  = CFG.usage && CFG.usage.tokens_max ? Number(CFG.usage.tokens_max) : 0;
+    var wLabel  = (CFG.usage && CFG.usage.window_label) || 'SESSION';
+    var rLabel  = (CFG.usage && CFG.usage.reset_label) || '';
+
+    var sub = 'per-agent breakdown \u00b7 ' + esc(wLabel.toLowerCase()) +
+      (rLabel ? ' \u00b7 ' + esc(rLabel) : '');
+
+    var html = '';
+
+    if (!entries.length) {
+      html += '<div class="mtext muted">No token data yet in the stream.</div>';
+    } else {
+      var maxTok = entries[0][1];
+      html += '<div class="mlab">TOKEN SHARE BY AGENT</div>';
+      html += '<div class="hintline" style="margin:0 0 8px">Tap an agent to open its detail (this view stays underneath).</div>';
+      entries.forEach(function (entry, idx) {
+        var name = entry[0], tok = entry[1];
+        var pct  = tokMax > 0
+          ? Math.min(100, Math.round(tok / tokMax * 100))
+          : Math.round(tok / maxTok * 100);
+        var cls  = PALETTE[idx % PALETTE.length];
+        html +=
+          '<div class="mbdrow mbdrow-click" data-usage-agent="' + esc(name) + '">' +
+            '<div class="n">' + esc(name) + '</div>' +
+            '<div class="track"><div class="fill ' + cls + '" style="width:' + pct + '%"></div></div>' +
+            '<div class="p">' + tok.toLocaleString() + '</div>' +
+          '</div>';
+      });
+      if (tokMax > 0) {
+        var totalPct = Math.min(100, Math.round(total / tokMax * 100));
+        html += '<div class="mtext muted" style="margin-top:10px">' +
+          'Total: ' + total.toLocaleString() + ' tokens (' + totalPct + '% of configured max)</div>';
+      } else {
+        html += '<div class="mtext muted" style="margin-top:10px">' +
+          'Total: ' + total.toLocaleString() + ' tokens this session. ' +
+          'Set <code>usage.tokens_max</code> in config.json to show % of limit.</div>';
+      }
+    }
+
+    openModal('TOKEN USAGE', sub, html);
+  }
+
+  // ── Approval modal ─────────────────────────────────────────────────────────
+  function openModalApproval(approvalId) {
+    // Find the primary awaiting_approval event
+    var primary = null;
+    var lifecycle = [];
+    EVENTS.forEach(function (e) {
+      if (e.approval_id === approvalId) lifecycle.push(e);
+      if (e.approval_id === approvalId && e.status === 'awaiting_approval') primary = e;
+    });
+    if (!primary) return;
+    lifecycle.sort(function (a, b) { return tsCompare(a.ts, b.ts); });
+
+    var sub = esc(primary.agent) + '  //  awaiting approval';
+
+    var html = '';
+
+    // Requested action
+    html += '<div class="mlab">REQUESTED ACTION</div>';
+    html += '<div class="mtext">' + esc(primary.action || '') + '</div>';
+    // Full reviewable draft — rendered from content / content_ref / detail
+    html += '<div id="apprDraft"></div>';
+    html += '<div class="appr-id-display">approval_id: ' + esc(approvalId) + '</div>';
+
+    // Full lifecycle from stream
+    html += '<div class="mlab">APPROVAL LIFECYCLE (FROM STREAM)</div>';
+    if (!lifecycle.length) {
+      html += '<div class="mtext muted">No events found.</div>';
+    } else {
+      html += '<ul class="mlist">';
+      lifecycle.forEach(function (e) {
+        var stCls = statusBadgeCls(e.status);
+        html += '<li>' +
+          '<span class="ts-sm">' + fmtDateTime(e.ts) + '</span>' +
+          '<span class="st-badge ' + stCls + '">' + esc(e.status) + '</span>' +
+          esc(e.action || '') +
+          (e.result ? ' &mdash; <b>' + esc(e.result) + '</b>' : '') +
+        '</li>';
+      });
+      html += '</ul>';
+    }
+
+    // Action area — rendered per configured actions_mode (never hardcoded)
+    html += '<div class="mlab">ACTIONS</div><div id="apprActions"></div>';
+
+    openModal(esc(primary.agent), sub, html);
+
+    // Track the approval so browser-mode handlers can act on it
+    MODAL_APPR = {
+      approvalId: approvalId,
+      agent: primary.agent || '',
+      action: primary.action || '',
+      detail: primary.detail || '',
+      category: primary.category || '',
+      content: Array.isArray(primary.content) ? primary.content : null,
+      contentRef: primary.content_ref || null,
+      draft: '',        // full editable draft copy (assembled/fetched below)
+      revised: null,    // reviewer's edited copy, once saved
+      reason: ''        // optional "why this change" note
+    };
+    renderApprDraft();
+    renderApprActions();
+  }
+
+  // Assemble the inline content blocks into one editable draft (blocks joined
+  // by blank lines) — must match how the server rebuilds the original.
+  function assembleInline(content) {
+    if (!Array.isArray(content)) return '';
+    return content.map(function (b) {
+      return String((b && b.text) || '').trim();
+    }).filter(Boolean).join('\n\n');
+  }
+
+  // Render the reviewable draft from whichever field is present (never keyed
+  // off a hardcoded mode). Sets MODAL_APPR.draft for Revise to edit.
+  // Small persistent "Edit"/"Edit again" link — only where actions can be taken.
+  function editLinkHtml(label) {
+    var m = CFG.actions_mode;
+    if (m !== 'browser' && m !== 'both') return '';
+    return '<span class="edit-link" data-act="revise">✎ ' + esc(label) + '</span>';
+  }
+  function draftHeader(title, editLabel) {
+    return '<div class="mlab mlab-row"><span>' + title + '</span>' +
+      editLinkHtml(editLabel) + '</div>';
+  }
+
+  function renderApprDraft() {
+    var c = document.getElementById('apprDraft');
+    if (!c || !MODAL_APPR) return;
+    var content = MODAL_APPR.content;
+    var ref = MODAL_APPR.contentRef;
+
+    if (Array.isArray(content) && content.length) {
+      MODAL_APPR.draft = assembleInline(content);
+      var h = draftHeader('DRAFT CONTENT', 'Edit');
+      content.forEach(function (b) {
+        var label = (b && b.label) || 'Draft';
+        h += '<div class="detail-box"><div class="cap">' + esc(label) + '</div>' +
+          esc(String((b && b.text) || '')) +
+          (b && b.path ? '<div class="appr-id-display">file: ' + esc(b.path) + '</div>' : '') +
+          '</div>';
+      });
+      c.innerHTML = h;
+      return;
+    }
+
+    if (ref) {
+      var refPath = typeof ref === 'string' ? ref : (ref.path || '');
+      var refId = (ref && ref.id) ? ref.id : '';
+      c.innerHTML = draftHeader('DRAFT CONTENT', 'Edit') +
+        '<div class="detail-box mtext muted" id="apprRefBox">Loading referenced draft…</div>';
+      if (!refPath) {
+        var box0 = document.getElementById('apprRefBox');
+        if (box0) box0.textContent = 'Referenced content' +
+          (refId ? ' (id: ' + refId + ')' : '') + ' — no path the dashboard can resolve.';
+        MODAL_APPR.draft = '';
+        return;
+      }
+      var reqId = MODAL_APPR.approvalId;
+      fetch('/api/content?ref=' + encodeURIComponent(refPath))
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r); })
+        .then(function (o) {
+          if (!MODAL_APPR || MODAL_APPR.approvalId !== reqId) return; // modal moved on
+          MODAL_APPR.draft = o.text || '';
+          var box = document.getElementById('apprRefBox');
+          if (box) {
+            box.classList.remove('muted');
+            box.innerHTML = '<div class="cap">' + esc(refPath) +
+              (refId ? ' &middot; id: ' + esc(refId) : '') + '</div>' + esc(o.text || '');
+          }
+        })
+        .catch(function () {
+          var box = document.getElementById('apprRefBox');
+          if (box) box.textContent = 'Could not load referenced draft (' + refPath + ').';
+        });
+      return;
+    }
+
+    // Fallback: no structured content — use the short detail line
+    MODAL_APPR.draft = MODAL_APPR.detail || MODAL_APPR.action || '';
+    c.innerHTML = MODAL_APPR.detail
+      ? draftHeader('DETAIL', 'Edit') + '<div class="detail-box">' + esc(MODAL_APPR.detail) + '</div>'
+      : '';
+  }
+
+  // ── Approval action area (mode-aware) ──────────────────────────────────────
+  function renderApprActions() {
+    var c = document.getElementById('apprActions');
+    if (!c) return;
+    var mode = CFG.actions_mode || 'readonly';
+    // Browser-acting modes get live buttons; 'both' also notes the Telegram hand-off.
+    if (mode === 'browser' || mode === 'both') { renderApprReview(); return; }
+    if (mode === 'telegram') {
+      c.innerHTML = '<div class="ro-note">' + esc(
+        CFG.telegram_configured
+          ? 'Actions happen in the configured Telegram chat. This view is read-only.'
+          : 'Action mode is set to “telegram” but no Telegram block is ' +
+            'configured. Add one in config.json, or change actions_mode.'
+      ) + '</div>';
+      return;
+    }
+    // readonly (safe default) — no acting buttons, just a note
+    c.innerHTML = '<div class="ro-note">' +
+      'Read-only view. Enable an action mode in config to approve or edit here.' +
+      '</div>';
+  }
+
+  // Telegram hand-off note appended in 'both' mode.
+  function bothTelegramNote() {
+    if ((CFG.actions_mode) !== 'both') return '';
+    return '<div class="ro-note">' + esc(
+      CFG.telegram_configured
+        ? 'These approvals are also actionable from your configured Telegram chat.'
+        : 'Mode is “both”, but no Telegram block is configured — only the in-browser ' +
+          'actions above are active.'
+    ) + '</div>';
+  }
+
+  // Browser mode — review screen (Approve / Revise / Decline, + Submit if revised)
+  function renderApprReview() {
+    var c = document.getElementById('apprActions');
+    if (!c || !MODAL_APPR) return;
+    setEditing(false); // back to the normal reading appearance
+    var revised = MODAL_APPR.revised != null;
+
+    // When edits are staged, show them with a lightweight "Edit again" link
+    // (re-enter editing without discarding), plus the optional reason.
+    var revisedBlock = revised
+      ? '<div class="detail-box">' +
+          '<div class="cap cap-row"><span>REVISED COPY — WILL BE SUBMITTED</span>' +
+            '<span class="edit-link" data-act="revise">✎ Edit again</span></div>' +
+          esc(MODAL_APPR.revised) + '</div>' +
+        (MODAL_APPR.reason
+          ? '<div class="detail-box"><div class="cap">REASON</div>' + esc(MODAL_APPR.reason) + '</div>'
+          : '')
+      : '';
+
+    // Exactly one filled-green primary in either state.
+    var buttons = revised
+      ? '<button class="btn btn-primary" data-act="submit-revise">Approve with edits</button>' +
+        '<button class="btn btn-neutral" data-act="revert-original">Revert to original</button>' +
+        '<button class="btn btn-decline" data-act="decline">Decline</button>'
+      : '<button class="btn btn-primary" data-act="approve">Approve</button>' +
+        '<button class="btn btn-revise"  data-act="revise">Revise</button>' +
+        '<button class="btn btn-decline" data-act="decline">Decline</button>';
+
+    c.innerHTML =
+      revisedBlock +
+      '<div class="btn-row">' + buttons + '</div>' +
+      bothTelegramNote() +
+      '<div class="appr-result" id="apprResult"></div>';
+  }
+
+  // Browser mode — edit screen (opened by Revise). Edits the full draft copy,
+  // with an optional "why this change?" note below it.
+  function renderApprEdit() {
+    var c = document.getElementById('apprActions');
+    if (!c || !MODAL_APPR) return;
+    var current = MODAL_APPR.revised != null ? MODAL_APPR.revised : (MODAL_APPR.draft || '');
+    c.innerHTML =
+      '<div class="edit-flag"><i></i>EDITING</div>' +
+      '<textarea class="appr-edit" id="apprEdit">' + esc(current) + '</textarea>' +
+      '<label class="appr-reason-lab" for="apprReason">Why this change? (optional)</label>' +
+      '<input class="appr-reason" id="apprReason" type="text" autocomplete="off"' +
+        ' placeholder="e.g. tone too formal · fixed the ask · trimmed a claim"' +
+        ' value="' + esc(MODAL_APPR.reason || '') + '">' +
+      '<div class="btn-row">' +
+        '<button class="btn btn-approve" data-act="save-revise">Save edits</button>' +
+        '<button class="btn btn-neutral" data-act="cancel-revise">Cancel</button>' +
+      '</div>';
+    setEditing(true); // live-editing accent shift
+    var ta = document.getElementById('apprEdit');
+    if (ta) ta.focus();
+  }
+
+  // Browser mode — POST the decision to the authenticated write-back endpoint
+  function submitDecision(decision, revisedText, reason) {
+    if (!MODAL_APPR) return;
+    // Re-query each time — renderApprReview() can recreate #apprResult.
+    function note(cls, msg) {
+      var r = document.getElementById('apprResult');
+      if (r) r.innerHTML = '<div class="ro-note ' + cls + '">' + esc(msg) + '</div>';
+    }
+    var payload = {
+      approval_id: MODAL_APPR.approvalId,
+      agent: MODAL_APPR.agent,
+      decision: decision
+    };
+    if (revisedText != null) payload.revised_text = revisedText;
+    if (reason && reason.trim()) payload.reason = reason.trim();  // omit when blank
+
+    // Tone is a function of BOTH the action and the outcome.
+    var isDecline = decision === 'decline';
+    var gerund = isDecline ? 'applying' : 'sending';  // what a wired handler would do
+
+    note('res-pending', 'Submitting ' + decision + '…');
+    fetch('/api/actions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-ACC-Token': CFG.actions_token || '' },
+      body: JSON.stringify(payload)
+    })
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          return { ok: r.ok, body: body };
+        });
+      })
+      .then(function (o) {
+        var body = o.body || {};
+
+        // Wired-but-failed → red, regardless of action.
+        if (!o.ok) {
+          note('res-err', body.detail || 'Request failed.');
+          return;
+        }
+
+        // Correction context (revise only).
+        var corr = '';
+        if (body.correction_logged) {
+          var n = body.changes;
+          corr = ' Correction logged (' + n + ' change' + (n === 1 ? '' : 's') + ').';
+        }
+
+        // Not-yet-wired stub → calm amber, informational (never green, never red).
+        // Reset to the ORIGINAL review state (discard staged edits) so the row
+        // returns to Approve / Revise / Decline, then show the recorded note.
+        if (body.stub) {
+          var recorded = isDecline ? 'Decline recorded.'
+                       : decision === 'revise' ? 'Revision recorded.'
+                       : 'Approval recorded.';
+          MODAL_APPR.revised = null;
+          MODAL_APPR.reason  = '';
+          renderApprReview();
+          note('res-info', recorded + corr +
+            ' Implement handle_action() in server.py to enable ' + gerund + ' it.');
+          return;
+        }
+
+        // Wired success → close + brief toast, tone follows the action.
+        // Approve/Revise = positive (green); Decline = completed rejection (red-tinted).
+        var toastMsg = isDecline ? 'Declined'
+                     : decision === 'revise' ? 'Approved with edits, command sent'
+                     : 'Approved, command sent';
+        showToast(toastMsg, isDecline ? 'neg' : 'ok');
+        closeModal();
+      })
+      .catch(function () { note('res-err', 'Network error submitting decision.'); });
+  }
+
+  // ── Click delegation ───────────────────────────────────────────────────────
+  document.addEventListener('click', function (e) {
+    // Close (X / backdrop) or Back (‹). Priority: editing an approval → review;
+    // else a stacked sub-modal → back to the previous; else fully close.
+    if (e.target === overlay || e.target.closest('#mClose') || e.target.closest('#mBack')) {
+      var card = document.getElementById('modalCard');
+      if (MODAL_APPR && card && card.classList.contains('editing')) {
+        renderApprReview(); return;
+      }
+      if (MODAL_BACK) { var back = MODAL_BACK; MODAL_BACK = null; back(); return; }
+      closeModal(); return;
+    }
+    // Clock settings button + modal (not tied to an approval)
+    if (e.target.closest('#clockSettings')) { openModalClock(); return; }
+    // Suggestion chip → fill the agent prompt box (never auto-sends).
+    var suggEl = e.target.closest('[data-sugg]');
+    if (suggEl) {
+      var pta = document.getElementById('agentPrompt');
+      if (pta) {
+        var cur = pta.value.trim();
+        pta.value = cur ? cur + '\n' + suggEl.getAttribute('data-sugg') : suggEl.getAttribute('data-sugg');
+        pta.focus();
+      }
+      return;
+    }
+    var gAct = e.target.closest('[data-act]');
+    if (gAct) {
+      var g = gAct.getAttribute('data-act');
+      if (g === 'modal-close')  { closeModal(); return; }
+      if (g === 'prompt-copy')  { copyAgentPrompt(); return; }
+      if (g === 'prompt-send')  { sendAgentPrompt(); return; }
+      if (g === 'clock-cancel') { closeModal(); return; }
+      if (g === 'clock-save') {
+        var tzSel  = document.getElementById('clockTz');
+        var fmtSel = document.querySelector('input[name="clkfmt"]:checked');
+        CLOCK.tz  = tzSel  ? tzSel.value  : 'local';
+        CLOCK.fmt = fmtSel ? fmtSel.value : '24';
+        try {
+          localStorage.setItem('acc_clock_tz', CLOCK.tz);
+          localStorage.setItem('acc_clock_fmt', CLOCK.fmt);
+        } catch (_) {}
+        tick();
+        closeModal();
+        return;
+      }
+    }
+    // Browser-mode approval action buttons
+    var actEl = e.target.closest('[data-act]');
+    if (actEl && MODAL_APPR) {
+      var act = actEl.getAttribute('data-act');
+      if (act === 'revise')        { renderApprEdit();   return; }
+      if (act === 'cancel-revise') { renderApprReview(); return; }
+      if (act === 'save-revise') {
+        var ta = document.getElementById('apprEdit');
+        var rs = document.getElementById('apprReason');
+        MODAL_APPR.revised = ta ? ta.value : '';
+        MODAL_APPR.reason  = rs ? rs.value.trim() : '';
+        renderApprReview(); return;
+      }
+      if (act === 'revert-original') {   // safe undo — discard staged edits
+        MODAL_APPR.revised = null;
+        MODAL_APPR.reason  = '';
+        renderApprReview(); return;
+      }
+      if (act === 'approve')       { submitDecision('approve'); return; }
+      if (act === 'decline')       { submitDecision('decline'); return; }
+      if (act === 'submit-revise') { submitDecision('revise', MODAL_APPR.revised, MODAL_APPR.reason); return; }
+      return;
+    }
+    // Agent row inside the usage modal → open that agent stacked over usage.
+    var uAgent = e.target.closest('[data-usage-agent]');
+    if (uAgent) { MODAL_BACK = openModalUsage; openModalAgent(uAgent.getAttribute('data-usage-agent')); return; }
+    // Agent card (top-level)
+    var agentEl = e.target.closest('[data-agent]');
+    if (agentEl) { MODAL_BACK = null; openModalAgent(agentEl.getAttribute('data-agent')); return; }
+    // Approval item (top-level)
+    var apprEl = e.target.closest('[data-appr-id]');
+    if (apprEl) { MODAL_BACK = null; openModalApproval(apprEl.getAttribute('data-appr-id')); return; }
+    // Usage panel (but not if click landed inside a meter child that has no data attr)
+    if (e.target.closest('#usagePanel') && !e.target.closest('[data-agent]')) {
+      MODAL_BACK = null; openModalUsage(); return;
+    }
+  });
+
+  // Escape: while editing an approval, step back to the review screen; else close.
+  document.addEventListener('keydown', function (e) {
+    if (e.key !== 'Escape') return;
+    var card = document.getElementById('modalCard');
+    if (MODAL_APPR && card && card.classList.contains('editing')) { renderApprReview(); return; }
+    closeModal();
+  });
+
+  // ── Clock ──────────────────────────────────────────────────────────────────
+  var DAYS   = ['SUN','MON','TUE','WED','THU','FRI','SAT'];
+  var MONTHS = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+  function tick() {
+    var now = new Date();
+    var cl  = document.getElementById('clock');
+    var dl  = document.getElementById('dateLine');
+    var tz  = (CLOCK.tz && CLOCK.tz !== 'local') ? CLOCK.tz : undefined;
+    var hour12 = CLOCK.fmt === '12';
+    try {
+      var tOpts = { hour: hour12 ? 'numeric' : '2-digit', minute: '2-digit', second: '2-digit', hour12: hour12 };
+      if (tz) tOpts.timeZone = tz;
+      var timeStr = new Intl.DateTimeFormat('en-US', tOpts).format(now);
+      var dOpts = { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' };
+      if (tz) dOpts.timeZone = tz;
+      var p = {};
+      new Intl.DateTimeFormat('en-US', dOpts).formatToParts(now).forEach(function (x) { p[x.type] = x.value; });
+      if (cl) cl.textContent = timeStr;
+      if (dl) dl.textContent = (p.weekday || '').toUpperCase() + ' \u00b7 ' + p.day + ' ' + (p.month || '').toUpperCase() + ' ' + p.year;
+    } catch (_) {
+      // Invalid tz / old browser \u2192 fall back to local 24h.
+      if (cl) cl.textContent = pad(now.getHours()) + ':' + pad(now.getMinutes()) + ':' + pad(now.getSeconds());
+      if (dl) dl.textContent = DAYS[now.getDay()] + ' \u00b7 ' + now.getDate() + ' ' + MONTHS[now.getMonth()] + ' ' + now.getFullYear();
+    }
+  }
+  setInterval(tick, 1000);
+  tick();
+
+  // \u2500\u2500 Clock settings \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+  function clockZones() {
+    try { if (typeof Intl.supportedValuesOf === 'function') return Intl.supportedValuesOf('timeZone'); } catch (_) {}
+    return ['UTC','America/New_York','America/Chicago','America/Denver','America/Los_Angeles',
+      'America/Sao_Paulo','Europe/London','Europe/Paris','Europe/Berlin','Europe/Moscow',
+      'Asia/Dubai','Asia/Kolkata','Asia/Shanghai','Asia/Tokyo','Australia/Sydney','Pacific/Auckland'];
+  }
+  function openModalClock() {
+    var cur = CLOCK.tz || 'local';
+    var opts = '<option value="local"' + (cur === 'local' ? ' selected' : '') + '>Local (browser default)</option>';
+    clockZones().forEach(function (z) {
+      opts += '<option value="' + esc(z) + '"' + (z === cur ? ' selected' : '') + '>' + esc(z) + '</option>';
+    });
+    var is24 = CLOCK.fmt !== '12';
+    var html =
+      '<div class="mlab">TIME FORMAT</div>' +
+      '<div class="btn-row">' +
+        '<label class="opt"><input type="radio" name="clkfmt" value="24"' + (is24 ? ' checked' : '') + '> 24-hour (military)</label>' +
+        '<label class="opt"><input type="radio" name="clkfmt" value="12"' + (!is24 ? ' checked' : '') + '> 12-hour (regular)</label>' +
+      '</div>' +
+      '<div class="mlab">TIME ZONE</div>' +
+      '<select id="clockTz" class="clk-select">' + opts + '</select>' +
+      '<div class="btn-row" style="margin-top:16px">' +
+        '<button class="btn btn-primary" data-act="clock-save">Save</button>' +
+        '<button class="btn btn-neutral" data-act="clock-cancel">Cancel</button>' +
+      '</div>';
+    openModal('CLOCK SETTINGS', 'display format \u00b7 time zone', html);
+  }
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+  function pad(n) { return n < 10 ? '0' + n : String(n); }
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+}());
+</script>
+</body>
+</html>

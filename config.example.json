@@ -1,0 +1,37 @@
+{
+  "_comment": "Copy to config.json and edit. config.json is gitignored — never commit it.",
+
+  "event_file": "./events.jsonl",
+
+  "bind": "127.0.0.1",
+  "port": 7000,
+
+  "title": "Agent Command Center",
+
+  "logo": null,
+
+  "billing_mode": "max",
+
+  "usage": {
+    "window_label": "SESSION",
+    "reset_label": "clears on page reload",
+    "tokens_max": null
+  },
+
+  "_actions_comment": "How the dashboard handles approvals. 'readonly' (default, safe): view only, no acting buttons. 'browser': in-page Approve/Revise/Decline that POST to the authenticated write-back endpoint — keep behind a private mesh + single user. 'telegram': actions hand off to the configured Telegram chat (needs the telegram block below). 'both': browser buttons AND the Telegram hand-off note (same browser-mode security tradeoff).",
+  "actions_mode": "readonly",
+
+  "_actions_token_comment": "Only used when actions_mode is 'browser' or 'both'. Shared secret the browser sends with each decision. Leave null to auto-generate one per server start (printed on boot). Set a stable value to keep it across restarts.",
+  "actions_token": null,
+
+  "_content_comment": "How reviewable draft content reaches the dashboard. 'inline' (default): the full draft travels in the event's 'content' array. 'reference': events carry a 'content_ref' pointer and the dashboard reads the draft from disk — keeps the event log lean and out of telemetry.",
+  "content_mode": "inline",
+
+  "_content_dir_comment": "Sandbox root for reference-mode draft files. null → the directory containing event_file. Referenced paths must stay inside this directory.",
+  "content_dir": null,
+
+  "_corrections_comment": "Where Revise+Submit decisions are logged (original + diff + optional reason). Separate from the event stream and gitignored.",
+  "corrections_file": "./corrections.jsonl",
+
+  "telegram": null
+}
