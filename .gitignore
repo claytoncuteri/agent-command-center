@@ -17,6 +17,16 @@ logo.*
 *.logo.*
 local_logo.*
 
+# Images — keep personal/raster images out of the repo.
+# (static/emblem.svg is the intentional default emblem and is tracked explicitly.)
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.ico
+
 # Virtual environment
 .venv/
 
