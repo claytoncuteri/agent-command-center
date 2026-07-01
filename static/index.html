@@ -348,10 +348,16 @@ body::after {
   background: rgba(3,6,14,.74);
   -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
   display: none; align-items: flex-end; justify-content: center; padding: 0;
+  overscroll-behavior: contain;
 }
+/* Freeze the page behind an open modal so touch-scroll stays in the sheet and
+   doesn't chain to the dashboard underneath (the position:fixed swap is set from
+   JS, which also preserves + restores the scroll offset). */
+body.modal-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hidden; }
 .overlay.open { display: flex; }
 .modal {
-  width: 100%; max-width: 560px; max-height: 88vh;
+  width: 100%; max-width: 560px;
+  max-height: 88vh; max-height: 88dvh; /* dvh excludes mobile browser chrome */
   /* Scroll lives on the body, not the whole card, so the header and the
      rounded gold rim stay put and the scrollbar sits inside the frame. */
   overflow: hidden;
@@ -383,7 +389,14 @@ body::after {
   cursor: pointer; flex: none; line-height: 1; margin-right: 10px;
 }
 .mback:hover { color: var(--cyan); border-color: var(--cyan-dim); }
-.mbody { padding: 16px 20px 22px; overflow-y: auto; flex: 1 1 auto; min-height: 0; overscroll-behavior: contain; }
+.mbody {
+  padding: 16px 20px 22px;
+  /* extra bottom padding clears the iOS home indicator on the bottom sheet */
+  padding-bottom: calc(22px + env(safe-area-inset-bottom, 0px));
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  flex: 1 1 auto; min-height: 0;
+  overscroll-behavior: contain; touch-action: pan-y;
+}
 
 /* Modal internals */
 .mlab {
@@ -1035,19 +1048,41 @@ body::after {
   // ── Modal system ───────────────────────────────────────────────────────────
   var overlay = document.getElementById('overlay');
 
+  // Background scroll lock. Swapping <body> to position:fixed is the only method
+  // that reliably stops iOS Safari from scrolling the page behind the sheet, so
+  // we stash the scroll offset while locked and restore it on close. Idempotent,
+  // so stacking a sub-modal (usage → agent) over an already-open modal is a no-op.
+  var _scrollLockY = 0;
+  function lockBodyScroll() {
+    if (document.body.classList.contains('modal-open')) return;
+    _scrollLockY = window.scrollY || window.pageYOffset || 0;
+    document.body.style.top = (-_scrollLockY) + 'px';
+    document.body.classList.add('modal-open');
+  }
+  function unlockBodyScroll() {
+    if (!document.body.classList.contains('modal-open')) return;
+    document.body.classList.remove('modal-open');
+    document.body.style.top = '';
+    window.scrollTo(0, _scrollLockY);
+  }
+
   function openModal(title, sub, bodyHtml) {
     document.getElementById('mTitle').textContent = title;
     // sub may contain markup (e.g. a status badge); callers escape dynamic text.
     document.getElementById('mSub').innerHTML     = sub;
-    document.getElementById('mBody').innerHTML    = bodyHtml;
+    var body = document.getElementById('mBody');
+    body.innerHTML = bodyHtml;
+    body.scrollTop = 0;               // start each modal (and each stacked view) at the top
     var back = document.getElementById('mBack');
     if (back) back.style.display = MODAL_BACK ? '' : 'none';
     setEditing(false);
+    lockBodyScroll();
     overlay.classList.add('open');
   }
 
   function closeModal() {
     overlay.classList.remove('open');
+    unlockBodyScroll();
     setEditing(false);
     MODAL_APPR = null;
     MODAL_BACK = null;
