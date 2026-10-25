@@ -86,5 +86,44 @@ class TestLoadConfig(unittest.TestCase):
         self.assertEqual(cfg["event_files"], ["events.jsonl"])
 
 
+class TestViews(unittest.TestCase):
+    def setUp(self):
+        self._view = server.CONFIG.get("view")
+
+    def tearDown(self):
+        server.CONFIG["view"] = self._view
+
+    def test_default_view_is_sessions(self):
+        server.CONFIG["view"] = "sessions"
+        self.assertEqual(server.page_for(""), "sessions.html")
+        self.assertEqual(server.page_for("anything/else"), "sessions.html")
+
+    def test_classic_and_sessions_paths_always_reachable(self):
+        for view in ("sessions", "classic"):
+            server.CONFIG["view"] = view
+            self.assertEqual(server.page_for("classic"), "index.html")
+            self.assertEqual(server.page_for("/sessions/"), "sessions.html")
+
+    def test_classic_as_default(self):
+        server.CONFIG["view"] = "classic"
+        self.assertEqual(server.page_for(""), "index.html")
+
+    def test_unknown_view_falls_back(self):
+        cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            os.chdir(tmp)
+            try:
+                with open("config.json", "w", encoding="utf-8") as f:
+                    json.dump({"view": "nope"}, f)
+                cfg = server.load_config()
+            finally:
+                os.chdir(cwd)
+        self.assertEqual(cfg["view"], "sessions")
+
+    def test_both_pages_exist(self):
+        for name in ("index.html", "sessions.html", "sessions.js"):
+            self.assertTrue((server.STATIC_DIR / name).is_file(), name)
+
+
 if __name__ == "__main__":
     unittest.main()

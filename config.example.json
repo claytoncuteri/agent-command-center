@@ -36,5 +36,8 @@
   "_corrections_comment": "Where Revise+Submit decisions are logged (original + diff + optional reason). Separate from the event stream and gitignored.",
   "corrections_file": "./corrections.jsonl",
 
-  "telegram": null
+  "telegram": null,
+
+  "_view_comment": "What / serves: 'sessions' (default; one row per session, needs-you first, phone friendly) or 'classic' (agent cards and the browser approvals workflow). Both stay reachable at /sessions and /classic.",
+  "view": "sessions"
 }

@@ -46,6 +46,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 |---|---|---|
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
+| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, "Needs you" first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
 | `title` | `"Agent Command Center"` | Displayed in the header and browser tab. |
@@ -266,7 +267,7 @@ project reports). Merge this into any `hooks` block you already have:
     "UserPromptSubmit":   [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
     "PermissionRequest":  [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
     "PermissionDenied":   [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
-    "PreToolUse":         [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "PreToolUse":         [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
     "PostToolUse":        [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
     "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
     "Stop":               [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
@@ -275,17 +276,33 @@ project reports). Merge this into any `hooks` block you already have:
 }
 ```
 
-`PostToolUse` fires on every tool call, so it runs `async` (in the background,
-never delaying the session). The others are quick and run inline with a short
-timeout. Python 3.8 or newer is enough; the script has no dependencies.
+`PreToolUse` and `PostToolUse` fire on every tool call, so they run `async`
+(in the background, never delaying the session). `PreToolUse` writes an event
+only when the session's activity changes ("Editing files" to "Running a
+command"), so a run of edits is one line. The others are quick and run inline
+with a short timeout. Python 3.8 or newer is enough; the script has no dependencies.
 
 **3. Point the dashboard at the file.** Events go to
 `~/.agent-command-center/events.jsonl` (override with `ACC_EVENT_FILE`). Set
 `"event_file": "~/.agent-command-center/events.jsonl"` in `config.json`, or add
 it to `event_files` next to your other streams.
 
-Each session appears as an agent named after its project folder (a Claude
-Code worktree reports its repository's folder). Events also carry `host` and
+**Session titles (opt-in).** Claude Code does not pass a session's title to
+hooks. To show titles, prefix each hook command with `ACC_READ_TITLES=1 `: the
+script then reads the title from the session's history file, parsing only its
+small `custom-title` lines and skipping every other line undecoded, and only
+for files under `~/.claude/projects`. Without it, rows read "Session <id>".
+
+**The session view** (`/`, the default) shows one row per session, sorted by
+urgency: *Needs you* (a permission prompt or question, oldest first, with how
+long it has waited), *Working* (what it is doing now, in plain words; a session
+silent for 10 minutes turns red as possibly stuck), *Your turn* (finished,
+waiting for your next message), then *Idle* and *Closed today* folded away. Tap
+a row for a plain-language timeline. It is built for a phone first and reads
+the same event stream; the original page stays at `/classic`.
+
+Each session appears under a project named after its folder (a Claude Code
+worktree reports its repository's folder). Events also carry `host` and
 `session` fields for later filtering; the dashboard ignores fields it does not
 know. Tests: `python -m unittest tests.test_claude_code_hook`.
 
