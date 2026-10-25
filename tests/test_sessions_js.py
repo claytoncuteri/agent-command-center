@@ -167,7 +167,7 @@ class TestSessionModel(unittest.TestCase):
             ev(9, "awaiting_approval", "Needs permission", approval_id="n1", detail="permission: Bash", session="need-old"),
         ])
         self.assertEqual([s["session"] for s in out["sessions"]], ["need-old", "need-new", "work", "turn"])
-        self.assertEqual(out["counts"], {"need": 2, "work": 1, "turn": 1, "idle": 0, "closed": 0})
+        self.assertEqual(out["counts"], {"need": 2, "work": 1, "turn": 1, "paused": 0, "idle": 0, "closed": 0})
 
     def test_title_and_projects(self):
         out = self.derive([
@@ -277,6 +277,75 @@ class TestSessionModel(unittest.TestCase):
         self.assertIsNone(s["steps"])
         s = self.one([ev(2, "started", "Working", steps_done=99, steps_total=4)])
         self.assertEqual(s["steps"]["done"], 4)
+
+    def test_paused_after_reaching_a_pause_point(self):
+        out = self.derive([
+            ev(30 * 60, "started", "Working", doing="Thinking", pause=True),
+            ev(30 * 60 - 3, "finished", "Your turn", pause=True),
+        ])
+        s = out["sessions"][0]
+        self.assertEqual(s["state"], "paused", "stays paused, however long ago")
+        self.assertEqual(s["line"], "Paused at your request · send a message to resume")
+        self.assertEqual(out["counts"]["paused"], 1)
+        self.assertEqual(s["timeline"][:2], ["Stopped at a pause point", "You asked it to pause; wrapping up"])
+
+    def test_wrapping_up_shows_as_working(self):
+        s = self.one([
+            ev(3, "started", "Working", doing="Thinking", pause=True),
+            ev(1, "started", "Working", doing="Editing files"),
+        ])
+        self.assertEqual(s["state"], "work")
+        self.assertTrue(s["line"].startswith("Wrapping up to pause · Editing files"))
+
+    def test_next_message_resumes(self):
+        s = self.one([
+            ev(9, "started", "Working", doing="Thinking", pause=True),
+            ev(8, "finished", "Your turn", pause=True),
+            ev(2, "started", "Working", doing="Thinking"),
+        ])
+        self.assertEqual(s["state"], "work")
+
+    def test_resume_after_restart_stays_paused_and_blocked_wins(self):
+        s = self.one([
+            ev(60, "started", "Working", doing="Thinking", pause=True),
+            ev(58, "finished", "Your turn", pause=True),
+            ev(5, "idle", "Session resumed"),
+        ])
+        self.assertEqual(s["state"], "paused")
+        s = self.one([
+            ev(9, "started", "Working", doing="Thinking", pause=True),
+            ev(8, "awaiting_approval", "Needs permission", approval_id="z", detail="permission: Bash"),
+        ])
+        self.assertEqual(s["state"], "need")
+
+    def test_backfilled_marker_pauses_a_finished_session(self):
+        s = self.one([
+            ev(20, "started", "Working", doing="Thinking"),
+            ev(18, "finished", "Your turn"),
+            ev(18, "info", "Pause requested", pause=True),
+        ])
+        self.assertEqual(s["state"], "paused")
+
+    def test_queued_pause_marker_shows_wrapping_up_while_working(self):
+        s = self.one([
+            ev(5, "started", "Working", doing="Thinking"),
+            ev(3, "started", "Working", doing="Editing files"),
+            ev(2, "info", "Pause requested", pause=True),
+        ])
+        self.assertEqual(s["state"], "work", "the marker does not end the work")
+        self.assertTrue(s["line"].startswith("Wrapping up to pause"))
+
+    def test_marker_only_session_does_not_crash(self):
+        s = self.one([ev(2, "info", "Pause requested", pause=True)])
+        self.assertIn(s["state"], ("turn", "idle", "paused"))
+
+    def test_paused_sorts_between_ready_and_idle(self):
+        out = self.derive([
+            ev(7 * 60, "finished", "Your turn", session="idle"),
+            ev(5, "finished", "Your turn", pause=True, session="paused"),
+            ev(4, "finished", "Your turn", session="ready"),
+        ])
+        self.assertEqual([s["session"] for s in out["sessions"]], ["ready", "paused", "idle"])
 
     def test_no_boot_time_keeps_old_behaviour(self):
         s = self.one([ev(50, "started", "Working", doing="Editing files")])

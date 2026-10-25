@@ -354,6 +354,149 @@ class TestStepProgress(HookCase):
         self.assertEqual(hook.update_steps(["in_progress"], PLAN, {"start": 9}), ["in_progress"])
 
 
+class TestPauseRequests(HookCase):
+    """Opt-in: a prompt asking the session to pause sets a flag, never writes text."""
+
+    ASKS = [
+        "i need to close my laptop soon. please pause",
+        "pause on this for now lol",
+        "Pause.",
+        "ok pause here",
+        "please find a good stopping point",
+        "I'm shutting down my MacBook, stop for now",
+        "let's wrap up for today",
+        "Pause for the night please",
+        "can you pause while i walk through the airport and we pick up later? No rush",
+        "let's pause until tonight",
+        "could you please pause, I'll resume tomorrow",
+        "we can pick this up later",
+    ]
+    NOT_ASKS = [
+        "add a pause button to the player",
+        "when the host pauses the movie, sync everyone",
+        "pause the video for everyone in the room",
+        "can you make the pause icon gold",
+        "the stream stops for now and then, why?",
+        "fix the paused state on the watch party screen",
+        "x" * 700 + " please pause",
+        "can you pause the video for everyone when the host leaves?",
+        "let's pause the movie automatically on disconnect",
+        "could you pause the player when the app backgrounds",
+        "the host can pause playback at any time",
+    ]
+
+    def setUp(self):
+        super().setUp()
+        os.environ["ACC_DETECT_PAUSE"] = "1"
+
+    def test_real_phrasings_detected(self):
+        for text in self.ASKS:
+            self.assertTrue(hook.is_pause_request(text), text)
+
+    def test_app_talk_and_long_prompts_ignored(self):
+        for text in self.NOT_ASKS:
+            self.assertFalse(hook.is_pause_request(text), text[:60])
+
+    def test_off_by_default(self):
+        os.environ.pop("ACC_DETECT_PAUSE")
+        self.assertFalse(hook.is_pause_request("please pause"))
+        evs = self.run_hook("UserPromptSubmit", prompt="please pause")
+        self.assertNotIn("pause", evs[-1])
+
+    def test_flag_on_prompt_and_stop_then_cleared(self):
+        marker = "please pause " + SENTINEL
+        self.run_hook("UserPromptSubmit", prompt=marker)
+        self.run_hook("PreToolUse", tool_name="Edit")
+        evs = self.run_hook("Stop")
+        self.assertTrue(evs[0]["pause"])
+        self.assertEqual(evs[0]["doing"], "Thinking")
+        self.assertTrue(evs[-1]["pause"])
+        self.assertEqual(evs[-1]["status"], "finished")
+        evs = self.run_hook("UserPromptSubmit", prompt="ok carry on")
+        self.assertNotIn("pause", evs[-1])
+        evs = self.run_hook("Stop")
+        self.assertNotIn("pause", evs[-1])
+        self.assertNotIn(SENTINEL, self.raw())
+        self.assertNotIn("please pause", self.raw())
+
+
+class TestQueuedPauseRequests(HookCase):
+    """A pause sent while the session works arrives queued; it is spotted from the history file."""
+
+    def setUp(self):
+        super().setUp()
+        os.environ["ACC_DETECT_PAUSE"] = "1"
+        self.home = os.path.join(self.tmp.name, "home")
+        self.proj = os.path.join(self.home, ".claude", "projects", "-p")
+        os.makedirs(self.proj)
+        self.home_patch = mock.patch.dict(os.environ, {"HOME": self.home})
+        self.home_patch.start()
+
+    def tearDown(self):
+        self.home_patch.stop()
+        super().tearDown()
+
+    def history(self, *recs):
+        path = os.path.join(self.proj, "s.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            for r in recs:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        return path
+
+    @staticmethod
+    def typed(text):
+        return {"type": "user", "message": {"role": "user", "content": text}}
+
+    @staticmethod
+    def queued(text, kind="human"):
+        return {"type": "attachment", "attachment": {"type": "queued_command", "prompt": text,
+                                                       "origin": {"kind": kind}, "commandMode": "prompt"}}
+
+    def test_queued_pause_marks_early_then_paused_at_stop(self):
+        path = self.history(self.typed("build the lobby " + SENTINEL),
+                            {"type": "user", "message": {"content": [{"type": "tool_result", "content": "x"}]}},
+                            self.queued("i need to close my laptop soon. please pause"))
+        self.run_hook("UserPromptSubmit", prompt="build the lobby")
+        evs = self.run_hook("PostToolUse", tool_name="Bash", transcript_path=path)
+        self.assertEqual([e["action"] for e in evs if e.get("pause")], ["Pause requested"])
+        self.run_hook("PostToolUse", tool_name="Edit", transcript_path=path)
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertEqual(len([e for e in evs if e["action"] == "Pause requested"]), 1, "marked once")
+        self.assertTrue(evs[-1]["pause"])
+        self.assertNotIn(SENTINEL, self.raw())
+        self.assertNotIn("close my laptop", self.raw())
+
+    def test_stop_alone_catches_a_queued_pause(self):
+        path = self.history(self.typed("go"), self.queued("pause on this for now lol"))
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertTrue(evs[-1]["pause"])
+
+    def test_notes_from_other_sessions_do_not_count(self):
+        path = self.history(self.typed("go"), self.queued("<task-notification>please pause</task-notification>", kind="task-notification"),
+                            self.queued("please pause", kind="peer"))
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertNotIn("pause", evs[-1])
+
+    def test_a_newer_message_wins(self):
+        path = self.history(self.queued("please pause"), self.typed("actually keep going"))
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertNotIn("pause", evs[-1])
+
+    def test_off_by_default_reads_nothing(self):
+        os.environ.pop("ACC_DETECT_PAUSE")
+        path = self.history(self.queued("please pause"))
+        with mock.patch.object(hook, "latest_human_message", side_effect=AssertionError("must not read")):
+            evs = self.run_hook("Stop", transcript_path=path)
+            self.run_hook("PostToolUse", tool_name="Bash", transcript_path=path)
+        self.assertNotIn("pause", evs[-1])
+
+    def test_outside_claude_projects_refused(self):
+        outside = os.path.join(self.tmp.name, "x.jsonl")
+        with open(outside, "w") as f:
+            f.write(json.dumps(self.queued("please pause")) + "\n")
+        self.assertIsNone(hook.latest_human_message(outside))
+
+
 class TestConcurrency(HookCase):
     """Hooks that fire at the same instant must not both open an ask."""
 
