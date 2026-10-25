@@ -13,11 +13,18 @@ Privacy, by construction
 ------------------------
 The script reads only these stdin fields: hook_event_name, session_id, cwd,
 source, session_title, tool_name, is_interrupt, notification_type. It never
-reads the prompt, tool inputs, tool results, the assistant's message, the
-transcript, or the free text of a notification. The `detail` field is always a
+reads the prompt, tool results, the assistant's message, the transcript, or
+the free text of a notification, and reads tool inputs in one case only: for
+a task-list update (TodoWrite, the app's update_plan) it reads each step's
+status value and the list's length, never a step's text, and reports counts
+("step 3 of 6"). See update_steps(). The `detail` field is always a
 fixed template ("permission: Bash"), and `doing` is a fixed phrase chosen from
 the tool name alone ("Editing files", "Running a command"). `title` is the
 session's own title as the app shows it, when available.
+
+Opt-in, off by default: with ACC_DETECT_PAUSE=1 the prompt is checked in
+memory for a request to pause ("please pause", "closing my laptop") and only a
+`pause` flag is written; see is_pause_request().
 
 One opt-in exception, off by default: with ACC_READ_TITLES=1 the script reads
 the session's title from its history file (transcript_path), parsing only the
@@ -46,6 +53,8 @@ Configuration (environment)
                      (default <event file dir>/state)
     ACC_HOST         override the host label (default: short hostname)
     ACC_HOOK_DEBUG   set to 1 to log exceptions to <event file dir>/hook.log
+    ACC_DETECT_PAUSE set to 1 to flag prompts that ask the session to pause
+                     (matched in memory, never written; opt-in; off by default)
     ACC_READ_TITLES  set to 1 to take session titles from the history file's
                      `custom-title` lines (opt-in; off by default)
 
@@ -207,6 +216,10 @@ def make_event(
     result: Optional[str] = None,
     title: Optional[str] = None,
     doing: Optional[str] = None,
+    steps_done: Optional[int] = None,
+    steps_total: Optional[int] = None,
+    steps_current: Optional[int] = None,
+    pause: Optional[bool] = None,
 ) -> Dict[str, Any]:
     ev: Dict[str, Any] = {
         "schema": SCHEMA,
@@ -230,6 +243,13 @@ def make_event(
         ev["title"] = title[:TITLE_MAX]
     if doing:
         ev["doing"] = doing[:DETAIL_MAX]
+    if steps_total:
+        ev["steps_done"] = int(steps_done or 0)
+        ev["steps_total"] = int(steps_total)
+        if steps_current:
+            ev["steps_current"] = int(steps_current)
+    if pause:
+        ev["pause"] = True
     return ev
 
 
@@ -298,6 +318,20 @@ def clean_title(value: Any) -> Optional[str]:
 
 # A record's own "type" key, compact or spaced. Text quoted inside a message is
 # JSON-escaped (\"type\":\"...\"), so it never matches these byte patterns.
+def _safe_history_path(path: Any) -> Optional[str]:
+    """The real path of a session history file under ~/.claude/projects, else None."""
+    if not isinstance(path, str) or not path:
+        return None
+    try:
+        real = os.path.realpath(os.path.expanduser(path))
+        allowed = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "projects"))
+    except OSError:
+        return None
+    if not real.startswith(allowed + os.sep) or not real.endswith(".jsonl"):
+        return None
+    return real
+
+
 _TITLE_MARKS = (b'"type":"custom-title"', b'"type": "custom-title"')
 _TITLE_TAIL_BYTES = 512 * 1024
 
@@ -313,13 +347,12 @@ def title_from_transcript(path: Any) -> Optional[str]:
     re-recorded as the session goes) and the whole file only if needed. Only
     files under ~/.claude/projects are opened.
     """
-    if os.environ.get("ACC_READ_TITLES") != "1" or not isinstance(path, str) or not path:
+    if os.environ.get("ACC_READ_TITLES") != "1":
+        return None
+    real = _safe_history_path(path)
+    if real is None:
         return None
     try:
-        real = os.path.realpath(os.path.expanduser(path))
-        allowed = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "projects"))
-        if not real.startswith(allowed + os.sep) or not real.endswith(".jsonl"):
-            return None
         size = os.path.getsize(real)
         with open(real, "rb") as f:
             for start in ((max(0, size - _TITLE_TAIL_BYTES), 0) if size > _TITLE_TAIL_BYTES else (0,)):
@@ -339,6 +372,178 @@ def title_from_transcript(path: Any) -> Optional[str]:
     except OSError:
         return None
     return None
+
+
+# ── Step progress (task lists) ──────────────────────────────────────────────────
+#
+# Sessions keep a task list: TodoWrite in the terminal, the desktop app's
+# update_plan, closed out by its wrap_up. From those inputs only the steps'
+# *status* values are read ("pending", "in_progress", "completed"), never any
+# step's text. The state keeps that list of statuses; events carry counts.
+
+_STEP_STATUSES = ("pending", "in_progress", "completed")
+_MAX_STEPS = 50
+
+
+def _statuses(items: Any) -> Optional[list]:
+    if not isinstance(items, list) or not items:
+        return None
+    out = []
+    for it in items[:_MAX_STEPS]:
+        status = it.get("status") if isinstance(it, dict) else None
+        out.append(status if status in _STEP_STATUSES else "pending")
+    return out
+
+
+def _is_app_tool(tool_name: str, name: str) -> bool:
+    return tool_name.startswith("mcp__") and tool_name.endswith("__" + name) and "ccd_turn" in tool_name
+
+
+def update_steps(steps: Any, tool_name: str, tool_input: Any) -> Optional[list]:
+    """The task list's statuses after this tool call, or None if it is not a task-list update."""
+    steps = list(steps) if isinstance(steps, list) else None
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    if tool_name == "TodoWrite":
+        return _statuses(tool_input.get("todos"))
+    if _is_app_tool(tool_name, "wrap_up"):
+        return ["completed"] * len(steps) if steps else None
+    if not _is_app_tool(tool_name, "update_plan"):
+        return None
+    fresh = _statuses(tool_input.get("items"))
+    if fresh is not None:
+        return fresh
+    if not steps:
+        return None
+    if tool_input.get("advance") is True:
+        cur = next((i for i, s in enumerate(steps) if s == "in_progress"), None)
+        if cur is not None:
+            steps[cur] = "completed"
+        nxt = next((i for i, s in enumerate(steps) if s == "pending"), None)
+        if nxt is not None:
+            steps[nxt] = "in_progress"
+        return steps
+    done, start = tool_input.get("done"), tool_input.get("start")
+    if isinstance(done, list):
+        for n in done:
+            if isinstance(n, int) and 1 <= n <= len(steps):
+                steps[n - 1] = "completed"
+    if isinstance(start, int) and 1 <= start <= len(steps):
+        steps = ["pending" if s == "in_progress" else s for s in steps]
+        steps[start - 1] = "in_progress"
+    return steps
+
+
+def current_step(steps: list) -> Optional[int]:
+    """1-based number of the step in progress, else of the next pending one."""
+    for i, s in enumerate(steps):
+        if s == "in_progress":
+            return i + 1
+    for i, s in enumerate(steps):
+        if s == "pending":
+            return i + 1
+    return None
+
+
+# ── Pause requests (opt-in) ─────────────────────────────────────────────────────
+#
+# "i need to close my laptop soon. please pause": with ACC_DETECT_PAUSE=1 the
+# hook checks the prompt for a request to stop at a pause point. The text is
+# matched in memory and never written; only a `pause` flag is. The patterns
+# want a request to *the session* (please pause, pause here, find a stopping
+# point, closing my laptop), so "add a pause button" or "when the host pauses
+# the movie" do not count. Long prompts are skipped: a pause request is short.
+
+_PAUSE_MAX_CHARS = 600
+_PAUSE_CHECK_SECONDS = 20.0  # while working, look for a queued pause request at most this often
+_PAUSE_PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
+    r"\bplease\s+pause\b",
+    r"\bpause\s+(here|now|there|for\s+now|for\s+(the\s+)?(day|night|tonight|today)|this|work|the\s+work|on\s+this|at\s+a\s+good\s+(point|spot))\b",
+    r"\b(find|get\s+to|reach|stop\s+at|look\s+for)\s+a\s+(good\s+|safe\s+|clean\s+|natural\s+)?(pause|pausing|stopping|break)\s+(point|spot)\b",
+    r"\b(close|closing|shut|shutting)\s+(down\s+)?(my|the)\s+(laptop|computer|mac|macbook)\b",
+    r"\b(stop|wrap\s+up|hold)\s+(here\s+)?for\s+(now|today|tonight|the\s+(day|night))\b",
+    r"^\s*(ok(ay)?[,.]?\s+)?pause\s*(please|now|here|for\s+now)?\s*[.!]*\s*$",
+    # "can you pause while i walk through the airport", "let's pause until tonight";
+    # not "can you pause the video" (the app's own pause feature).
+    r"\b(can|could|would|will)\s+you\s+(please\s+)?pause\b(?!\s+(the|a|an|my|our|this|that|it|their|everyone'?s?)\s+"
+    r"(button|video|movie|film|show|stream|player|playback|music|song|audio|clip|trailer|party))",
+    r"\blet'?s\s+pause\b(?!\s+(the|a|an|this|that|it)\s+(button|video|movie|film|show|stream|player|playback))",
+    r"\bpause\s+(while|until|till)\b",
+    r"\b(pick\s+(this|it)\s+up|pick\s+up|continue|resume|come\s+back\s+to\s+(this|it))\s+(later|tomorrow|tonight|in\s+a\s+bit)\b",
+)]
+
+
+_HUMAN_TAIL_BYTES = 1024 * 1024
+
+
+def _human_text(rec: Dict[str, Any]) -> Optional[str]:
+    """The text of a record the user typed, else None (tool results, notes, other sessions)."""
+    if rec.get("isMeta") or rec.get("isSidechain"):
+        return None
+    if rec.get("type") == "attachment":
+        a = rec.get("attachment")
+        # A message sent while the session was working is queued, not a prompt.
+        if not (isinstance(a, dict) and a.get("type") == "queued_command"):
+            return None
+        origin = a.get("origin")
+        if not (isinstance(origin, dict) and origin.get("kind") == "human"):
+            return None
+        content = a.get("prompt")
+    elif rec.get("type") == "user":
+        content = (rec.get("message") or {}).get("content")
+    else:
+        return None
+    if isinstance(content, list):
+        if any(isinstance(b, dict) and b.get("type") == "tool_result" for b in content):
+            return None
+        content = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    if not isinstance(content, str) or not content.strip() or content.lstrip().startswith("<"):
+        return None
+    return content
+
+
+def latest_human_message(path: Any) -> Optional[str]:
+    """
+    Opt-in (ACC_DETECT_PAUSE=1): the newest message the user typed in a session,
+    including one sent while it was working (those arrive queued and fire no
+    prompt hook). Read from the history file's tail, kept in memory, never written.
+    """
+    real = _safe_history_path(path)
+    if real is None:
+        return None
+    try:
+        size = os.path.getsize(real)
+        with open(real, "rb") as f:
+            for start in ((max(0, size - _HUMAN_TAIL_BYTES), 0) if size > _HUMAN_TAIL_BYTES else (0,)):
+                f.seek(start)
+                if start:
+                    f.readline()  # skip a partial first line
+                found = None
+                for line in f:
+                    if b'"user"' not in line and b'"queued_command"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    text = _human_text(rec) if isinstance(rec, dict) else None
+                    if text is not None:
+                        found = text
+                if found is not None:
+                    return found
+    except OSError:
+        return None
+    return None
+
+
+def is_pause_request(prompt: Any) -> bool:
+    """True when ACC_DETECT_PAUSE=1 and the prompt asks the session to pause."""
+    if os.environ.get("ACC_DETECT_PAUSE") != "1" or not isinstance(prompt, str):
+        return False
+    text = prompt.strip()
+    if not text or len(text) > _PAUSE_MAX_CHARS:
+        return False
+    return any(p.search(text) for p in _PAUSE_PATTERNS)
 
 
 # ── Approval lifecycle ──────────────────────────────────────────────────────────
@@ -519,7 +724,12 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
 
     elif event == "UserPromptSubmit":
         close_approval(agent, session_id, state, status="declined", result="not run")
-        emit("Working", "started", doing="Thinking")
+        pause = is_pause_request(data.get("prompt"))
+        if pause:
+            state["pause"] = True
+        else:
+            state.pop("pause", None)
+        emit("Working", "started", doing="Thinking", pause=pause or None)
         set_doing("Thinking")
 
     elif event == "PermissionRequest":
@@ -548,6 +758,25 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
         else:
             result = "answered" if tool_name == QUESTION_TOOL else None
             close_approval(agent, session_id, state, status="approved", result=result, tool_name=tool_name)
+        # A pause request sent mid-turn arrives queued: spot it early, so the
+        # session shows "Wrapping up to pause" before it stops.
+        if os.environ.get("ACC_DETECT_PAUSE") == "1" and not state.get("pause"):
+            import time
+            now = time.time()
+            if now - float(state.get("pause_checked") or 0) >= _PAUSE_CHECK_SECONDS:
+                state["pause_checked"] = now
+                if is_pause_request(latest_human_message(data.get("transcript_path"))):
+                    state["pause"] = True
+                    emit("Pause requested", "info", pause=True)
+                save_state(session_id, state)
+        # A task-list update: report how far along the session is (counts only).
+        steps = update_steps(state.get("steps"), tool_name, data.get("tool_input"))
+        if steps is not None and steps != state.get("steps"):
+            state["steps"] = steps
+            save_state(session_id, state)
+            done = sum(1 for s in steps if s == "completed")
+            emit("Working", "started", doing=state.get("doing"), steps_done=done, steps_total=len(steps),
+                 steps_current=current_step(steps))
 
     elif event == "PostToolUseFailure":
         current = state.get("open")
@@ -565,7 +794,15 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
     elif event == "Stop":
         close_approval(agent, session_id, state, status="declined", result="not run")
         # The app names a session after its first turn and on every rename.
-        emit("Your turn", "finished", title=title_from_transcript(data.get("transcript_path")))
+        # Paused when the turn began with a pause request, or when the newest
+        # message the user typed (possibly sent mid-turn, which fires no prompt
+        # hook) asks to pause.
+        pause = bool(state.get("pause")) or (
+            os.environ.get("ACC_DETECT_PAUSE") == "1"
+            and is_pause_request(latest_human_message(data.get("transcript_path")))
+        )
+        emit("Your turn", "finished", title=title_from_transcript(data.get("transcript_path")),
+             pause=pause or None)
         set_doing(None)
 
     elif event == "SessionEnd":

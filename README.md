@@ -305,6 +305,19 @@ script then reads the title from the session's history file, parsing only its
 small `custom-title` lines and skipping every other line undecoded, and only
 for files under `~/.claude/projects`. Without it, rows read "Session <id>".
 
+**Paused sessions (opt-in).** Prefix each hook command with
+`ACC_DETECT_PAUSE=1 ` too, and a message asking a session to pause ("please
+pause", "can you pause while I walk through the airport and we pick up later",
+"closing my laptop") puts it under **Paused** once it stops, until your next
+message.
+- **Where it looks:** the hook checks the prompt, and, at the end of each turn and at most every 20 s while the session works, your newest typed message in its history file. That second check catches messages you send mid-turn, which arrive queued and fire no prompt hook.
+- **What it writes:** the text is matched in memory and never written; only a `pause` flag is.
+- **What it ignores:** talk about a product's own pause feature, such as "pause the video" or "the pause button", and notes from other sessions.
+
+**Step progress.** When a session keeps a task list (the terminal's TodoWrite
+or the desktop app's plan), working rows show "Step 3 of 6" with a segment per
+step. Only the steps' status values are read, never their text.
+
 **The session view** (`/`, the default) shows one row per session, sorted by
 urgency: *Blocked* (a permission prompt or question, oldest first, with how
 long it has waited), *Working* (what it is doing now, in plain words; a session

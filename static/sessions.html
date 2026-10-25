@@ -31,6 +31,7 @@
   --red: #ff8080;
   --red-soft: rgba(255,128,128,.14);
   --grey: #8fa3c4;
+  --violet: #b6acff;
   --radius: 16px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -85,7 +86,7 @@ button { font: inherit; color: inherit; }
 .live.wait { color: var(--grey); border-color: var(--hair); background: rgba(20,36,78,.5); }
 @keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
 
-.summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.summary { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin-bottom: 12px; }
 .sum {
   text-align: left; border-radius: 14px; padding: 10px 12px; cursor: pointer;
   background: linear-gradient(180deg, var(--glass), var(--glass2));
@@ -98,6 +99,7 @@ button { font: inherit; color: inherit; }
 .sum.work b { color: var(--green); }
 .sum.turn b { color: var(--blue); }
 .sum.idle b { color: var(--grey); }
+.sum.paused b { color: var(--violet); }
 .sum.on { outline: 2px solid var(--hair-strong); outline-offset: 1px; }
 
 .chips { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; scrollbar-width: none; }
@@ -162,6 +164,10 @@ button { font: inherit; color: inherit; }
 .spark i.w { background: rgba(99,240,182,.55); }
 .spark i.a { background: rgba(240,211,140,.75); }
 .spark i.t { background: rgba(111,208,255,.45); }
+.steps { grid-column: 2 / span 2; display: flex; gap: 3px; height: 7px; margin-top: 5px; }
+.steps i { flex: 1; border-radius: 3px; background: rgba(150,195,255,.14); }
+.steps i.d { background: rgba(99,240,182,.75); }
+.steps i.c { background: rgba(99,240,182,.35); box-shadow: 0 0 0 1px rgba(99,240,182,.7) inset; animation: pulse 1.6s infinite; }
 
 .s-need .dot { background: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft), 0 0 12px var(--gold); }
 .s-error .dot { background: var(--red); box-shadow: 0 0 0 4px var(--red-soft), 0 0 12px var(--red); }
@@ -169,6 +175,9 @@ button { font: inherit; color: inherit; }
 .s-quiet .dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
 .s-turn .dot { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
 .s-idle .dot, .s-closed .dot { background: transparent; border: 2px solid var(--grey); }
+/* Paused: two short violet bars, the universal pause sign. */
+.s-paused .dot { border-radius: 2px; background: linear-gradient(90deg, var(--violet) 0 35%, transparent 35% 65%, var(--violet) 65% 100%);
+  box-shadow: 0 0 8px rgba(182,172,255,.6); }
 .s-closed { opacity: .7; }
 
 .need-card {
@@ -219,8 +228,8 @@ button { font: inherit; color: inherit; }
   .summary { max-width: 760px; }
   .sheet-bg { align-items: center; } .sheet { border-radius: 22px; padding-bottom: 24px; }
 }
-@media (max-width: 380px) {
-  .summary { gap: 6px; } .sum { padding: 9px 9px; } .sum b { font-size: 21px; }
+@media (max-width: 480px) {
+  .summary { gap: 5px; } .sum { padding: 8px 7px; } .sum b { font-size: 20px; } .sum span { font-size: 11px; }
 }
 </style>
 </head>
@@ -255,6 +264,10 @@ button { font: inherit; color: inherit; }
     <section class="group" data-group="turn">
       <div class="sec"><h2>Ready for you</h2><span class="n" id="nTurn"></span><span class="hint">waiting for your next message</span></div>
       <div class="list" id="listTurn"></div>
+    </section>
+    <section class="group" data-group="paused">
+      <div class="sec"><h2>Paused</h2><span class="n" id="nPaused"></span><span class="hint">you asked these to stop at a pause point</span></div>
+      <div class="list" id="listPaused"></div>
     </section>
     <section class="group" data-group="idle">
       <div class="sec"><h2>Idle</h2><span class="n" id="nIdle"></span><span class="hint">no turn in over 6h</span></div>
@@ -354,14 +367,22 @@ button { font: inherit; color: inherit; }
       if (s.state === 'quiet') {
         h += '<span class="quiet-note">No activity for ' + esc(M.dur(t - s.lastAt)) + ' while working. It may be stuck.</span>';
       }
-      if (s.state === 'work' || s.state === 'quiet') {
+      if ((s.state === 'work' || s.state === 'quiet') && s.steps && s.steps.total <= 20) {
+        // Step progress: one segment per step, done, current and still to do.
+        var segs = [];
+        for (var i = 1; i <= s.steps.total; i++) {
+          segs.push('<i class="' + (i <= s.steps.done ? 'd' : i === (s.steps.current || s.steps.done + 1) ? 'c' : '') + '"></i>');
+        }
+        h += '<span class="steps" title="' + esc(s.steps.done + ' of ' + s.steps.total + ' steps done') + '">' + segs.join('') + '</span>';
+      } else if (s.state === 'work' || s.state === 'quiet') {
         h += '<span class="spark" aria-hidden="true">' + s.bars.map(function (b) { return '<i class="' + b + '"></i>'; }).join('') + '</span>';
       }
     }
     // The sessions that are waiting on you get a one-tap way to answer.
     var link = linkFor(s);
-    if (link && (s.state === 'need' || s.state === 'turn' || s.state === 'quiet')) {
-      h += '<span class="acts">' + openLink(link, s.state === 'need' ? 'Answer in Claude' : 'Open in Claude') + '</span>';
+    if (link && (s.state === 'need' || s.state === 'turn' || s.state === 'quiet' || s.state === 'paused')) {
+      var label = s.state === 'need' ? 'Answer in Claude' : s.state === 'paused' ? 'Resume in Claude' : 'Open in Claude';
+      h += '<span class="acts">' + openLink(link, label) + '</span>';
     }
     return h + '</div>';
   }
@@ -391,14 +412,14 @@ button { font: inherit; color: inherit; }
     var all = MODEL.sessions;
     // Tile counts follow the project filter, so a number always matches its list.
     var inProject = all.filter(function (s) { return !ui.project || s.project === ui.project; });
-    var c = { need: 0, work: 0, turn: 0, idle: 0 };
+    var c = { need: 0, work: 0, turn: 0, paused: 0, idle: 0 };
     inProject.forEach(function (s) { var b = bucket(s); if (b in c) c[b] += 1; });
 
     var active = all.filter(function (s) { return s.state !== 'closed'; });
     $('brandSub').textContent = active.length + ' session' + (active.length === 1 ? '' : 's') +
       (MODEL.hosts.length ? ' on ' + MODEL.hosts.length + ' machine' + (MODEL.hosts.length === 1 ? '' : 's') : '');
 
-    var tiles = [['need', 'Blocked'], ['work', 'Working'], ['turn', 'Ready'], ['idle', 'Idle']];
+    var tiles = [['need', 'Blocked'], ['work', 'Working'], ['turn', 'Ready'], ['paused', 'Paused'], ['idle', 'Idle']];
     $('summary').innerHTML = tiles.map(function (p) {
       var hot = p[0] === 'need' && c.need > 0 ? ' hot' : '';
       return '<button class="sum ' + p[0] + hot + (ui.state === p[0] ? ' on' : '') + '" data-state="' + p[0] + '">' +
@@ -416,10 +437,11 @@ button { font: inherit; color: inherit; }
     var need = shown.filter(function (s) { return bucket(s) === 'need'; });
     var work = shown.filter(function (s) { return bucket(s) === 'work'; });
     var turn = shown.filter(function (s) { return s.state === 'turn'; });
+    var paused = shown.filter(function (s) { return s.state === 'paused'; });
     var idle = shown.filter(function (s) { return s.state === 'idle'; });
     var closed = shown.filter(function (s) { return s.state === 'closed'; });
 
-    var LABELS = { need: 'Blocked', work: 'Working', turn: 'Ready for you', idle: 'Idle' };
+    var LABELS = { need: 'Blocked', work: 'Working', turn: 'Ready for you', paused: 'Paused', idle: 'Idle' };
     document.querySelectorAll('.group').forEach(function (g) {
       g.hidden = !!ui.state && g.getAttribute('data-group') !== ui.state;
     });
@@ -438,12 +460,15 @@ button { font: inherit; color: inherit; }
     $('nNeed').textContent = need.length || '';
     $('nWork').textContent = work.length || '';
     $('nTurn').textContent = turn.length || '';
+    $('nPaused').textContent = paused.length || '';
     $('nIdle').textContent = idle.length || '';
 
     renderList('listNeed', need, t, '<div class="calm">Nothing is blocked.' +
       (turn.length ? ' ' + turn.length + (turn.length === 1 ? ' session is' : ' sessions are') + ' ready for you.' : '') + '</div>');
     renderList('listWork', work, t, '<div class="calm">No session is working' + esc(where) + '.</div>');
     renderList('listTurn', turn, t, ui.state === 'turn' || ui.project ? '<div class="calm">No session is ready for you' + esc(where) + '.</div>' : '');
+    renderList('listPaused', paused, t, ui.state === 'paused' || ui.project ? '<div class="calm">No paused sessions' + esc(where) + '.</div>' : '');
+    $('listPaused').closest('.group').hidden = $('listPaused').closest('.group').hidden || (!paused.length && ui.state !== 'paused');
     var IDLE_SHOW = 3;
     var idleShown = ui.idleOpen ? idle : idle.slice(0, IDLE_SHOW);
     renderList('listIdle', idleShown, t, '');
