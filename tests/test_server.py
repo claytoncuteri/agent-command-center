@@ -125,6 +125,213 @@ class TestViews(unittest.TestCase):
             self.assertTrue((server.STATIC_DIR / name).is_file(), name)
 
 
+PHONE = "100.64.0.10"
+
+
+class TestGateDecision(unittest.TestCase):
+    """Who may see the dashboard: the machine itself, and listed proxy clients only."""
+
+    def h(self, **kw):
+        return [(k.replace("_", "-").lower().encode(), v.encode()) for k, v in kw.items()]
+
+    def test_local_browser_allowed(self):
+        self.assertEqual(server.gate_decision("127.0.0.1", self.h(host="127.0.0.1:7070"), []), (True, "local"))
+        for host in ("localhost:7070", "[::1]:7070", "127.0.0.1", "LOCALHOST"):
+            self.assertTrue(server.gate_decision("::1", self.h(host=host), [])[0], host)
+
+    def test_local_request_for_other_host_refused(self):
+        # DNS rebinding in the local browser, or a forwarder that adds no headers.
+        for host in ("evil.example.org:7070", "dash.example-tailnet.ts.net", "", "127.0.0.1.evil.example"):
+            hdrs = self.h(host=host) if host else []
+            self.assertFalse(server.gate_decision("127.0.0.1", hdrs, [PHONE])[0], host)
+
+    def test_non_loopback_refused_even_without_headers(self):
+        self.assertFalse(server.gate_decision("100.64.0.10", [], [PHONE])[0])
+        self.assertFalse(server.gate_decision(None, [], [PHONE])[0])
+
+    def test_listed_phone_through_proxy_allowed(self):
+        hdrs = self.h(x_forwarded_for=PHONE, tailscale_user_login="me@example.org")
+        self.assertEqual(server.gate_decision("127.0.0.1", hdrs, [PHONE]), (True, "remote allowed"))
+
+    def test_other_tailnet_device_refused(self):
+        hdrs = self.h(x_forwarded_for="100.64.0.20", tailscale_user_login="me@example.org")
+        self.assertEqual(server.gate_decision("127.0.0.1", hdrs, [PHONE]), (False, "remote not allowed"))
+
+    def test_proxy_without_address_refused(self):
+        for hdrs in (self.h(tailscale_user_login="me@example.org"), self.h(x_forwarded_host="x.ts.net"),
+                     self.h(tailscale_headers_info="https://tailscale.com/s/serve-headers"), self.h(forwarded="for=1.2.3.4")):
+            self.assertFalse(server.gate_decision("127.0.0.1", hdrs, [PHONE])[0], hdrs)
+
+    def test_address_lists_and_duplicates_refused(self):
+        self.assertFalse(server.gate_decision("127.0.0.1", self.h(x_forwarded_for=PHONE + ", 6.6.6.6"), [PHONE])[0])
+        two = [(b"x-forwarded-for", PHONE.encode()), (b"x-forwarded-for", b"6.6.6.6")]
+        self.assertFalse(server.gate_decision("127.0.0.1", two, [PHONE])[0])
+        self.assertFalse(server.gate_decision("127.0.0.1", self.h(x_forwarded_for=""), [PHONE])[0])
+
+    def test_empty_allow_list_fails_closed(self):
+        self.assertFalse(server.gate_decision("127.0.0.1", self.h(x_forwarded_for=PHONE), [])[0])
+        self.assertFalse(server.gate_decision("127.0.0.1", self.h(x_forwarded_for=PHONE), None)[0])
+
+    def test_header_names_are_case_insensitive(self):
+        hdrs = [(b"X-Forwarded-For", b"100.64.0.20")]
+        self.assertFalse(server.gate_decision("127.0.0.1", hdrs, [PHONE])[0])
+
+
+class TestRemoteGateMiddleware(unittest.TestCase):
+    """The ASGI wrapper: refused requests never reach the app, streams included."""
+
+    def run_request(self, client, headers, allowed, scope_type="http"):
+        import asyncio
+        reached, sent = [], []
+
+        async def inner(scope, receive, send):
+            reached.append(scope["path"])
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(msg):
+            sent.append(msg)
+
+        prev = server.CONFIG.get("remote_clients")
+        server.CONFIG["remote_clients"] = allowed
+        try:
+            scope = {"type": scope_type, "path": "/api/stream", "client": (client, 5000), "headers": headers}
+            asyncio.run(server.RemoteGate(inner)(scope, receive, send))
+        finally:
+            server.CONFIG["remote_clients"] = prev
+        status = next((m["status"] for m in sent if m["type"] == "http.response.start"), None)
+        return reached, status
+
+    def test_refused_never_reaches_app(self):
+        reached, status = self.run_request("127.0.0.1", [(b"x-forwarded-for", b"100.64.0.20")], [PHONE])
+        self.assertEqual((reached, status), ([], 403))
+
+    def test_websocket_from_other_device_is_closed(self):
+        import asyncio
+        reached, sent = [], []
+
+        async def inner(scope, receive, send):
+            reached.append(scope["type"])
+
+        async def send(msg):
+            sent.append(msg)
+
+        prev = server.CONFIG.get("remote_clients")
+        server.CONFIG["remote_clients"] = [PHONE]
+        try:
+            scope = {"type": "websocket", "path": "/ws", "client": ("127.0.0.1", 1),
+                     "headers": [(b"x-forwarded-for", b"100.64.0.20"), (b"host", b"x.ts.net")]}
+            asyncio.run(server.RemoteGate(inner)(scope, None, send))
+        finally:
+            server.CONFIG["remote_clients"] = prev
+        self.assertEqual(reached, [])
+        self.assertEqual(sent, [{"type": "websocket.close", "code": 1008}])
+
+    def test_lifespan_passes_through(self):
+        import asyncio
+        reached = []
+
+        async def inner(scope, receive, send):
+            reached.append(scope["type"])
+
+        asyncio.run(server.RemoteGate(inner)({"type": "lifespan"}, None, None))
+        self.assertEqual(reached, ["lifespan"])
+
+    def test_allowed_phone_reaches_stream(self):
+        reached, status = self.run_request("127.0.0.1", [(b"x-forwarded-for", PHONE.encode())], [PHONE])
+        self.assertEqual((reached, status), (["/api/stream"], 200))
+
+    def test_local_reaches_app(self):
+        reached, status = self.run_request("127.0.0.1", [(b"host", b"127.0.0.1:7070")], [])
+        self.assertEqual((reached, status), (["/api/stream"], 200))
+
+    def test_middleware_is_installed(self):
+        self.assertTrue(any(m.cls is server.RemoteGate for m in server.app.user_middleware))
+
+    def test_uvicorn_keeps_the_real_peer_address(self):
+        # With proxy_headers on, uvicorn would wrap the app in its proxy-headers
+        # middleware, replace the loopback peer with X-Forwarded-For, and the gate
+        # would refuse every proxied viewer. Loaded as the LaunchAgent runs it.
+        import uvicorn
+        self.assertIs(server.UVICORN_OPTIONS.get("proxy_headers"), False)
+        cfg = uvicorn.Config(server.app, **server.UVICORN_OPTIONS)
+        cfg.load()
+        self.assertIs(cfg.loaded_app.app if hasattr(cfg.loaded_app, "app") else cfg.loaded_app, server.app)
+        self.assertNotIn("ProxyHeaders", type(cfg.loaded_app).__name__)
+        src = pathlib.Path(server.__file__).read_text(encoding="utf-8")
+        self.assertIn("**UVICORN_OPTIONS", src)
+
+
+class TestRealAppThroughGate(unittest.TestCase):
+    """Raw ASGI requests through the real server.app: every route sits behind the gate."""
+
+    def call(self, path, headers, method="GET"):
+        import asyncio
+        sent = []
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(msg):
+            sent.append(msg)
+
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method,
+                 "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
+                 "root_path": "", "headers": headers, "client": ("127.0.0.1", 5000), "server": ("127.0.0.1", 7070)}
+        prev = server.CONFIG.get("remote_clients")
+        server.CONFIG["remote_clients"] = [PHONE]
+        try:
+            asyncio.run(server.app(scope, receive, send))
+        finally:
+            server.CONFIG["remote_clients"] = prev
+        return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+    def test_other_device_refused_everywhere(self):
+        mini = [(b"host", b"dash.example-tailnet.ts.net"), (b"x-forwarded-for", b"100.64.0.20"),
+                (b"tailscale-user-login", b"me@example.org")]
+        for path in ("/", "/sessions", "/classic", "/static/sessions.html", "/static/sessions.js",
+                     "/apple-touch-icon.png", "/api/config", "/api/events", "/api/links", "/api/content?ref=x"):
+            for method in ("GET", "HEAD"):
+                self.assertEqual(self.call(path, mini, method), 403, (method, path))
+
+    def test_phone_and_local_reach_pages(self):
+        phone = [(b"host", b"dash.example-tailnet.ts.net"), (b"x-forwarded-for", PHONE.encode())]
+        local = [(b"host", b"127.0.0.1:7070")]
+        for hdrs in (phone, local):
+            self.assertEqual(self.call("/static/sessions.js", hdrs), 200)
+            self.assertEqual(self.call("/", hdrs), 200)
+            self.assertEqual(self.call("/api/config", hdrs), 200)
+
+
+class TestTouchIcon(unittest.TestCase):
+    def setUp(self):
+        self.prev = server.CONFIG.get("touch_icon")
+
+    def tearDown(self):
+        server.CONFIG["touch_icon"] = self.prev
+
+    def test_absent_is_404(self):
+        from fastapi import HTTPException
+        server.CONFIG["touch_icon"] = None
+        with self.assertRaises(HTTPException) as cm:
+            server.touch_icon()
+        self.assertEqual(cm.exception.status_code, 404)
+
+    def test_only_png_files(self):
+        from fastapi import HTTPException
+        with tempfile.TemporaryDirectory() as tmp:
+            txt = pathlib.Path(tmp, "secret.txt"); txt.write_text("x")
+            server.CONFIG["touch_icon"] = str(txt)
+            with self.assertRaises(HTTPException):
+                server.touch_icon()
+            png = pathlib.Path(tmp, "icon.png"); png.write_bytes(b"\x89PNG\r\n\x1a\n")
+            server.CONFIG["touch_icon"] = str(png)
+            self.assertEqual(server.touch_icon().path, str(png))
+
+
 class TestClaudeAppLinks(unittest.TestCase):
     """The desktop-app link lookup reads only sessionId and cliSessionId."""
 

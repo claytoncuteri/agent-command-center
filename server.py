@@ -60,6 +60,13 @@ _DEFAULTS: dict = {
     # same session in the app ("Open in Claude"). Reads only two id fields from
     # the app's per-session records. Off unless you turn it on.
     "claude_app_links": False,
+    # Remote viewing through Tailscale serve (or any local reverse proxy).
+    # A request that arrives with proxy headers is "remote" and is allowed only
+    # when its X-Forwarded-For is one of these exact addresses. Empty = no
+    # remote viewers (fail closed). Direct local requests are unaffected.
+    "remote_clients": [],
+    # Optional PNG served at /apple-touch-icon.png (the iPhone home-screen icon).
+    "touch_icon": None,
 }
 
 _VIEWS = {"sessions": "sessions.html", "classic": "index.html"}
@@ -175,6 +182,96 @@ def _sizes(paths: list[str]) -> tuple:
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Agent Command Center", docs_url=None, redoc_url=None)
+
+
+# ── Remote gate ─────────────────────────────────────────────────────────────────
+#
+# The server binds to loopback. Remote viewers reach it only through a local
+# reverse proxy such as `tailscale serve`, which replaces any client-sent
+# X-Forwarded-For and Tailscale-User-* headers with the real tailnet address
+# and identity (checked against Tailscale 1.104.1 on macOS). So: a loopback request with
+# no proxy headers is the machine's own browser and is allowed; a request with
+# proxy headers is allowed only when X-Forwarded-For is a single address on the
+# remote_clients list. Anything else gets 403.
+
+_PROXY_HEADERS = (
+    b"x-forwarded-for", b"x-forwarded-host", b"forwarded",
+    b"tailscale-user-login", b"tailscale-headers-info",
+)
+_LOOPBACK = {"127.0.0.1", "::1"}
+_LOCAL_HOSTNAMES = {"127.0.0.1", "localhost", "[::1]"}
+
+
+def _host_name(headers: list) -> str:
+    """The Host header's name part, without the port ("[::1]" kept bracketed)."""
+    host = next((v.decode("latin-1").strip().lower() for k, v in headers if k.lower() == b"host"), "")
+    if host.startswith("["):
+        return host.split("]", 1)[0] + "]"
+    return host.rsplit(":", 1)[0] if ":" in host else host
+
+
+def gate_decision(client_host: Optional[str], headers: list, allowed: list) -> tuple:
+    """(allowed, reason) for one request; headers are ASGI (bytes, bytes) pairs."""
+    if client_host not in _LOOPBACK:
+        return False, "not loopback"
+    names = {k.lower() for k, _ in headers}
+    if not any(h in names for h in _PROXY_HEADERS):
+        # A local request must also name a local host. This refuses DNS-rebinding
+        # pages in the local browser and forwarders that add no proxy headers.
+        if _host_name(headers) not in _LOCAL_HOSTNAMES:
+            return False, "local request for a non-local host"
+        return True, "local"
+    xff = [v.decode("latin-1").strip() for k, v in headers if k.lower() == b"x-forwarded-for"]
+    if len(xff) != 1 or not xff[0] or "," in xff[0]:
+        return False, "no single forwarded address"
+    if xff[0] in {str(a) for a in (allowed or [])}:
+        return True, "remote allowed"
+    return False, "remote not allowed"
+
+
+class RemoteGate:
+    """ASGI middleware applying gate_decision to every HTTP request, streams included."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        kind = scope.get("type")
+        if kind not in ("http", "websocket"):
+            return await self.inner(scope, receive, send)  # lifespan only
+        client = scope.get("client") or (None, None)
+        ok, reason = gate_decision(client[0], scope.get("headers") or [], CONFIG.get("remote_clients") or [])
+        if ok:
+            return await self.inner(scope, receive, send)
+        xff = next((v.decode("latin-1") for k, v in (scope.get("headers") or []) if k.lower() == b"x-forwarded-for"), "-")
+        # repr() so a crafted path or header cannot forge log lines or escape codes.
+        print(f"[acc] refused: {reason} from={xff[:64]!r} path={scope.get('path', '')[:80]!r}", flush=True)
+        if kind == "websocket":
+            await send({"type": "websocket.close", "code": 1008})
+            return
+        await send({"type": "http.response.start", "status": 403,
+                    "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
+        await send({"type": "http.response.body", "body": b"Forbidden"})
+
+
+app.add_middleware(RemoteGate)
+
+# proxy_headers=False matters: uvicorn otherwise rewrites the client address
+# from X-Forwarded-For for loopback peers, and the gate must see the real
+# socket peer (always loopback here) to tell a proxied request from a local one.
+UVICORN_OPTIONS = {"log_level": "warning", "reload": False, "proxy_headers": False}
+
+
+@app.get("/apple-touch-icon.png")
+def touch_icon() -> FileResponse:
+    """The home-screen icon, when touch_icon points at a PNG on disk."""
+    path = CONFIG.get("touch_icon")
+    if not path:
+        raise HTTPException(status_code=404, detail="No touch icon configured.")
+    p = pathlib.Path(path).expanduser()
+    if p.suffix.lower() != ".png" or not p.is_file():
+        raise HTTPException(status_code=404, detail="Touch icon not found.")
+    return FileResponse(str(p), media_type="image/png")
 STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 
@@ -729,10 +826,4 @@ if __name__ == "__main__":
         print(f"[acc]   Warning: actions_mode is {mode!r} but no telegram block is configured.")
     print(f"[acc] Remote access: use a private mesh (e.g. Tailscale), not port-forwarding.")
     _maybe_start_telegram()
-    uvicorn.run(
-        "server:app",
-        host=host,
-        port=port,
-        log_level="warning",
-        reload=False,
-    )
+    uvicorn.run("server:app", host=host, port=port, **UVICORN_OPTIONS)

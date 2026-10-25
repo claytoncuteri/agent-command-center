@@ -42,5 +42,11 @@
   "view": "sessions",
 
   "_claude_app_links_comment": "macOS + Claude desktop app: add 'Open in Claude' to sessions waiting on you, opening that session in the app. Reads only two id fields (sessionId, cliSessionId) from the app's per-session records under ~/Library/Application Support/Claude/claude-code-sessions. The app's record format is not a public API and may change; if it does, the buttons simply disappear.",
-  "claude_app_links": false
+  "claude_app_links": false,
+
+  "_remote_clients_comment": "Addresses allowed to view through a local reverse proxy such as 'tailscale serve' (tailnet only). Empty = no remote viewers. Keep bind at 127.0.0.1 and start with 'python server.py'. Example: [\"100.64.0.10\", \"fd7a:115c:a1e0::10\"].",
+  "remote_clients": [],
+
+  "_touch_icon_comment": "Optional PNG for the iPhone home-screen icon, served at /apple-touch-icon.png.",
+  "touch_icon": null
 }
