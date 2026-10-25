@@ -56,6 +56,25 @@ button { font: inherit; color: inherit; }
   background: linear-gradient(135deg, #8fe3ff, #6b7dff 60%, #f0d38c);
   box-shadow: 0 0 22px -4px rgba(111,208,255,.7);
 }
+/* Optional portraits from config "logo" (one image or a list), each in a gold
+   ring, joined by a small five-pointed star. Replaces the gradient mark. */
+.marks { display: flex; align-items: center; gap: 6px; flex: none; }
+.marks[hidden] { display: none; }
+.portrait {
+  width: 44px; height: 44px; border-radius: 50%; flex: none; overflow: hidden;
+  border: 2px solid var(--gold);
+  box-shadow: 0 0 0 3px rgba(240,211,140,.14), 0 0 22px -4px rgba(240,211,140,.65);
+  background: #1b2f63;
+}
+/* Slight zoom so a portrait that already has its own ring does not show two. */
+.portrait img { width: 100%; height: 100%; object-fit: cover; display: block; transform: scale(1.12); }
+.star { width: 14px; height: 14px; flex: none; fill: var(--gold); filter: drop-shadow(0 0 6px rgba(240,211,140,.8)); }
+/* A faint field of five-pointed stars behind the header. */
+.top { position: relative; }
+.starfield { position: absolute; inset: -10px -6px; pointer-events: none; z-index: -1; overflow: hidden; }
+.starfield svg { position: absolute; fill: var(--gold); opacity: .22; animation: twinkle 6s ease-in-out infinite; }
+@keyframes twinkle { 0%,100% { opacity: .12 } 50% { opacity: .38 } }
+@media (prefers-reduced-motion: reduce) { .starfield svg, .live i, .s-work .dot { animation: none; } }
 .brand { min-width: 0; font-family: "Space Grotesk"; font-weight: 700; font-size: 19px; letter-spacing: .3px; }
 .brand small { display: block; font-family: "Inter"; font-weight: 500; font-size: 12px; color: var(--sub); letter-spacing: 0; }
 .live { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--green);
@@ -184,7 +203,9 @@ button { font: inherit; color: inherit; }
 <body>
 <div class="wrap" id="app">
   <header class="top">
-    <div class="mark" aria-hidden="true"></div>
+    <div class="starfield" id="starfield" aria-hidden="true"></div>
+    <div class="mark" id="mark" aria-hidden="true"></div>
+    <div class="marks" id="marks" hidden></div>
     <div class="brand"><span id="brandTitle">Agent Command Center</span><small id="brandSub">Connecting&hellip;</small></div>
     <span class="live wait" id="live"><i></i><span id="liveLabel">Connecting</span></span>
   </header>
@@ -419,8 +440,34 @@ button { font: inherit; color: inherit; }
     es.onerror = function () { setLive('off'); };
   }
 
+  var STAR = '<path d="M12 1.6l2.9 6.6 7.2.7-5.4 4.8 1.6 7.1L12 17.1l-6.3 3.7 1.6-7.1L1.9 8.9l7.2-.7z"/>';
+
+  // Portraits from config "logo": a data: URI or URL, or a list of them.
+  function renderMarks(logo) {
+    var list = (Array.isArray(logo) ? logo : [logo]).filter(function (x) {
+      return typeof x === 'string' && /^(data:image\/|https?:\/\/|\/)/.test(x);
+    }).slice(0, 3);
+    if (!list.length) return;
+    $('marks').innerHTML = list.map(function (src, i) {
+      return (i ? '<svg class="star" viewBox="0 0 24 24" aria-hidden="true">' + STAR + '</svg>' : '') +
+        '<span class="portrait"><img alt="" src="' + esc(src) + '"></span>';
+    }).join('');
+    $('marks').hidden = false;
+    $('mark').style.display = 'none';
+  }
+
+  // A few faint stars scattered behind the header; fixed positions so it never shifts.
+  (function stars() {
+    var spots = [[3, 18, 9, 0], [22, 70, 7, 1.5], [38, 12, 6, 3], [55, 64, 8, 0.8], [71, 22, 6, 2.2], [86, 60, 9, 4], [95, 14, 6, 1]];
+    $('starfield').innerHTML = spots.map(function (p) {
+      return '<svg viewBox="0 0 24 24" style="left:' + p[0] + '%;top:' + p[1] + '%;width:' + p[2] + 'px;height:' + p[2] +
+        'px;animation-delay:' + p[3] + 's">' + STAR + '</svg>';
+    }).join('');
+  })();
+
   fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
     if (cfg && cfg.title) $('brandTitle').textContent = cfg.title;
+    if (cfg && cfg.logo) renderMarks(cfg.logo);
     render();
   }).catch(function () {});
   fetch('/api/events').then(function (r) { return r.json(); }).then(function (evs) {

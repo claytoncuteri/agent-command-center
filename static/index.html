@@ -769,11 +769,13 @@ body.modal-open { position: fixed; left: 0; right: 0; width: 100%; overflow: hid
       '</g>';
 
     var center;
-    if (CFG.logo) {
-      // User-supplied logo path from config.json (never committed)
+    // "logo" may be one image or a list (the session view shows several); use the first here.
+    var logo = Array.isArray(CFG.logo) ? CFG.logo[0] : CFG.logo;
+    if (logo) {
+      // User-supplied logo from config.json (never committed)
       center =
         '<defs><clipPath id="lclip"><circle cx="60" cy="60" r="33"/></clipPath></defs>' +
-        '<image href="' + esc(CFG.logo) + '" x="27" y="27" width="66" height="66"' +
+        '<image href="' + esc(logo) + '" x="27" y="27" width="66" height="66"' +
         ' clip-path="url(#lclip)" preserveAspectRatio="xMidYMid slice"/>' +
         '<circle cx="60" cy="60" r="33" fill="none" stroke="#e6c473" stroke-width="2" opacity=".9"/>';
     } else {
