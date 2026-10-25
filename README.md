@@ -46,6 +46,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 |---|---|---|
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
+| `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app. Reads only the `sessionId` and `cliSessionId` fields of the app's per-session records. |
 | `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, "Needs you" first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |

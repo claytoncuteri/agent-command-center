@@ -125,6 +125,17 @@ button { font: inherit; color: inherit; }
   box-shadow: inset 0 1px 0 rgba(220,235,255,.10), 0 10px 28px -20px rgba(0,8,40,.9);
 }
 .row:hover, .row:focus-visible { border-color: var(--hair-strong); outline: none; }
+.acts { grid-column: 2 / span 2; margin-top: 8px; display: flex; gap: 8px; }
+.open-claude {
+  display: inline-flex; align-items: center; gap: 5px; text-decoration: none;
+  font-size: 13px; font-weight: 600; color: var(--text);
+  padding: 7px 12px; border-radius: 10px; border: 1px solid var(--hair-strong);
+  background: rgba(111,208,255,.14);
+}
+.open-claude:hover { background: rgba(111,208,255,.24); }
+.need-card .open-claude { border-color: rgba(240,211,140,.6); background: rgba(240,211,140,.16); }
+.need-card .open-claude:hover { background: rgba(240,211,140,.26); }
+.sheet-acts { margin: -4px 0 14px; }
 .dot { width: 10px; height: 10px; border-radius: 50%; grid-row: 1 / span 2; align-self: start; margin-top: 6px; }
 .title { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .when { font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -241,6 +252,7 @@ button { font: inherit; color: inherit; }
   'use strict';
   var M = window.ACCSessions;
   var EVENTS = [];
+  var LINKS = {};   // session (8 chars) -> claude:// link, when claude_app_links is on
   var MODEL = null;
   var lastUpdate = null;
   var openKey = null;
@@ -288,7 +300,8 @@ button { font: inherit; color: inherit; }
     var meta = [];
     if (multiHost && s.host) meta.push(s.host);
     var line = M.describe(s, t);
-    var h = '<button class="' + cls + '" data-key="' + esc(s.key) + '">' +
+    // A div with button semantics, so the row can hold its own "Open in Claude" link.
+    var h = '<div class="' + cls + '" data-key="' + esc(s.key) + '" role="button" tabindex="0">' +
       '<span class="dot" aria-hidden="true"></span>' +
       '<span class="title">' + esc(titleOf(s)) + '</span>' +
       '<span class="when">' + esc(when) + '</span>';
@@ -309,7 +322,20 @@ button { font: inherit; color: inherit; }
         h += '<span class="spark" aria-hidden="true">' + s.bars.map(function (b) { return '<i class="' + b + '"></i>'; }).join('') + '</span>';
       }
     }
-    return h + '</button>';
+    // The sessions that are waiting on you get a one-tap way to answer.
+    var link = linkFor(s);
+    if (link && (s.state === 'need' || s.state === 'turn' || s.state === 'quiet')) {
+      h += '<span class="acts">' + openLink(link, s.state === 'need' ? 'Answer in Claude' : 'Open in Claude') + '</span>';
+    }
+    return h + '</div>';
+  }
+
+  function linkFor(s) {
+    return (s.source === 'claude-code' && s.session && LINKS[s.session]) || null;
+  }
+  function openLink(href, label) {
+    return '<a class="open-claude" href="' + esc(href) + '">' + esc(label) +
+      ' <span aria-hidden="true">↗</span></a>';
   }
 
   function renderList(id, list, t, empty) {
@@ -405,6 +431,7 @@ button { font: inherit; color: inherit; }
       '<h3 id="sheetTitle">' + esc(titleOf(s)) + '</h3>' +
       '<div class="meta">' + esc(head.join(' · ')) + '</div>' +
       '<div class="now">' + nowLine + '</div>' +
+      (linkFor(s) && s.state !== 'closed' ? '<div class="sheet-acts">' + openLink(linkFor(s), 'Open this session in Claude') + '</div>' : '') +
       '<ul class="tl">' + items + '</ul>';
   }
 
@@ -412,6 +439,8 @@ button { font: inherit; color: inherit; }
   function closeSheet() { openKey = null; $('sheetBg').classList.remove('on'); document.body.style.overflow = ''; }
 
   document.addEventListener('click', function (ev) {
+    // "Open in Claude" follows its claude:// link and does not also open the sheet.
+    if (ev.target.closest && ev.target.closest('a.open-claude')) return;
     var el = ev.target.closest ? ev.target.closest('[data-key],[data-state],[data-project],[data-fold],#sheetClose') : null;
     if (!el) { if (ev.target === $('sheetBg')) closeSheet(); return; }
     if (el.id === 'sheetClose') { closeSheet(); return; }
@@ -422,7 +451,17 @@ button { font: inherit; color: inherit; }
     else if (el.getAttribute('data-fold') === 'closed') { ui.closedOpen = !ui.closedOpen; }
     save(); render();
   });
-  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && openKey) closeSheet(); });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && openKey) { closeSheet(); return; }
+    var row = ev.target && ev.target.getAttribute && ev.target.getAttribute('data-key');
+    if (row && (ev.key === 'Enter' || ev.key === ' ')) { ev.preventDefault(); openSheet(row); }
+  });
+
+  function loadLinks() {
+    fetch('/api/links').then(function (r) { return r.json(); }).then(function (map) {
+      if (map && typeof map === 'object') { LINKS = map; render(); }
+    }).catch(function () {});
+  }
 
   function setLive(state) {
     var el = $('live');
@@ -474,7 +513,9 @@ button { font: inherit; color: inherit; }
     EVENTS = evs || []; lastUpdate = now(); render();
   }).catch(function () { setLive('off'); });
   connect();
+  loadLinks();
   setInterval(render, 15000);
+  setInterval(loadLinks, 60000);
 })();
 </script>
 </body>
