@@ -47,6 +47,8 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
 | `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app. Reads only the `sessionId` and `cliSessionId` fields of the app's per-session records. |
+| `remote_clients` | `[]` | Tailnet (or LAN) addresses allowed to view the dashboard through a local reverse proxy such as `tailscale serve`. Empty means no remote viewers. See [Viewing from your phone](#viewing-from-your-phone). |
+| `touch_icon` | `null` | Path to a PNG served at `/apple-touch-icon.png`, the icon an iPhone uses for Add to Home Screen. |
 | `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
@@ -315,6 +317,35 @@ Each session appears under a project named after its folder (a Claude Code
 worktree reports its repository's folder). Events also carry `host` and
 `session` fields for later filtering; the dashboard ignores fields it does not
 know. Tests: `python -m unittest tests.test_claude_code_hook`.
+
+---
+
+## Viewing from your phone
+
+Keep `bind` at `127.0.0.1` and let [Tailscale](https://tailscale.com) carry
+the dashboard to your phone, inside your tailnet only:
+
+```bash
+tailscale serve --bg --https=443 http://127.0.0.1:7000
+```
+
+Then list the devices allowed to look, by tailnet address (IPv4 and IPv6):
+
+```json
+{ "remote_clients": ["100.64.0.10", "fd7a:115c:a1e0::10"] }
+```
+
+**How the gate decides.** Every HTTP and websocket request passes it:
+- **Local requests:** from loopback, with no proxy headers, and a `Host` of `127.0.0.1`, `localhost` or `[::1]`. These are allowed. The Host check refuses DNS-rebinding pages and forwarders that add no headers.
+- **Proxied requests:** from loopback, carrying `X-Forwarded-For` or `Tailscale-User-*`. These are allowed only when there is exactly one `X-Forwarded-For` header and its value is on the list. Tailscale serve replaces any client-sent values of those headers with the real ones.
+- **Everything else** gets a 403 and one log line.
+
+**Rules that keep it safe:**
+- Start the server with `python server.py`. It turns off uvicorn's proxy-header rewriting, which would otherwise hide the real peer from the gate.
+- Never use `tailscale funnel`, which publishes to the internet.
+- Prefer `--https` with a neutral machine name. HTTPS certificates put the machine's name in public certificate-transparency logs.
+
+On iPhone, open the `https://<machine>.<tailnet>.ts.net` address in Safari, then choose Share and **Add to Home Screen**.
 
 ---
 
