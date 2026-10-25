@@ -332,6 +332,22 @@ class TestTouchIcon(unittest.TestCase):
             self.assertEqual(server.touch_icon().path, str(png))
 
 
+class TestBootTime(unittest.TestCase):
+    def test_boot_time_is_a_past_epoch_or_none(self):
+        import time
+        bt = server.boot_time()
+        if bt is not None:
+            self.assertGreater(bt, 1_000_000_000)
+            self.assertLess(bt, time.time())
+
+    def test_parses_macos_sysctl_format(self):
+        self.assertEqual(server._BOOTTIME.search("{ sec = 1792418871, usec = 340805 } Mon Oct 19").group(1), "1792418871")
+
+    def test_config_reports_it(self):
+        body = json.loads(server.api_config().body)
+        self.assertIn("booted_at", body)
+
+
 class TestClaudeAppLinks(unittest.TestCase):
     """The desktop-app link lookup reads only sessionId and cliSessionId."""
 

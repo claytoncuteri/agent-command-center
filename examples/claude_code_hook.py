@@ -141,6 +141,8 @@ def clear_state(session_id: str) -> None:
         os.remove(_state_path(session_id))
     except OSError:
         pass
+    # The session's .lock file stays (removing a held lock file would let a
+    # second hook lock a fresh one); it is a few bytes per session.
 
 
 # ── Event writing ───────────────────────────────────────────────────────────────
@@ -430,13 +432,62 @@ def close_approval(
 # ── Hook dispatch ───────────────────────────────────────────────────────────────
 
 
+_LOCK_WAIT_SECONDS = 3.0
+
+
+class _SessionLock:
+    """
+    One hook at a time per session. Some hooks run in the background and can
+    fire at the same instant (PermissionRequest and PreToolUse for one
+    question); without this both read "nothing open" and both open an
+    approval, and only one ever gets closed. Waits up to 3 s, then proceeds
+    unlocked rather than ever holding up the session.
+    """
+
+    def __init__(self, session_id: str):
+        self.path = _state_path(session_id)[: -len(".json")] + ".lock"
+        self.fd: Optional[int] = None
+
+    def __enter__(self):
+        try:
+            import fcntl
+            import time
+            _ensure_dir(state_dir())
+            self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600)
+            deadline = time.monotonic() + _LOCK_WAIT_SECONDS
+            while True:
+                try:
+                    fcntl.flock(self.fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() > deadline:
+                        break
+                    time.sleep(0.01)
+        except (OSError, ImportError):
+            pass
+        return self
+
+    def __exit__(self, *exc):
+        if self.fd is not None:
+            try:
+                os.close(self.fd)  # closing releases the lock
+            except OSError:
+                pass
+        return False
+
+
 def handle(data: Dict[str, Any]) -> None:
-    event = data.get("hook_event_name")
-    if not isinstance(event, str):
-        return
     session_id = data.get("session_id")
     if not isinstance(session_id, str) or not session_id:
         session_id = "unknown"
+    with _SessionLock(session_id):
+        _dispatch(data, session_id)
+
+
+def _dispatch(data: Dict[str, Any], session_id: str) -> None:
+    event = data.get("hook_event_name")
+    if not isinstance(event, str):
+        return
     agent = agent_name(data.get("cwd") if isinstance(data.get("cwd"), str) else "")
     tool_name = data.get("tool_name")
     tool_name = tool_name if isinstance(tool_name, str) else ""
@@ -456,6 +507,10 @@ def handle(data: Dict[str, Any]) -> None:
         source = data.get("source")
         title = clean_title(data.get("session_title")) or title_from_transcript(data.get("transcript_path"))
         if source in ("resume", "compact"):
+            if source == "resume":
+                # A prompt that was open when the app quit or the machine
+                # restarted is gone; resuming does not bring it back.
+                close_approval(agent, session_id, state, status="declined", result="not run")
             emit("Session resumed", "idle", title=title)
         else:
             clear_state(session_id)

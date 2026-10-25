@@ -79,8 +79,10 @@
     return e.status === 'started' && e.action === 'Working' && (!e.doing || e.doing === 'Thinking');
   }
 
-  function deriveSessions(events, now) {
+  // opts.bootedAt (ms): when the machine running the sessions last started, if known.
+  function deriveSessions(events, now, opts) {
     now = typeof now === 'number' ? now : Date.now();
+    var bootedAt = opts && typeof opts.bootedAt === 'number' ? opts.bootedAt : null;
     var groups = {};
     (events || []).forEach(function (e) {
       if (!e || !e.agent) return;
@@ -112,6 +114,14 @@
         s.lastAt = t;
         if (e.action === 'Session opened' && s.openedAt === null) s.openedAt = t;
 
+        // A Claude Code ask cannot outlive its turn: the hook closes any open ask
+        // when a turn ends or a new one starts. So a turn boundary clears asks a
+        // missed close left behind. (Not for other agent stacks, where an
+        // approval can stay open across unrelated tasks.)
+        if (e.source === 'claude-code' && (e.status === 'finished' || isTurnStart(e) ||
+            e.action === 'Session opened' || e.action === 'Session resumed' || e.action === 'Session closed')) {
+          open = {};
+        }
         if (e.status === 'awaiting_approval' && e.approval_id) open[e.approval_id] = it;
         if (RESOLVED[e.status] && e.approval_id) delete open[e.approval_id];
 
@@ -159,6 +169,17 @@
         s.state = (now - lastT > IDLE_AFTER) ? 'idle' : 'turn';
         s.since = lastT;
         s.fresh = last.action === 'Session opened' || last.action === 'Session resumed';
+      }
+
+      // A session that was blocked or working when the machine last restarted
+      // cannot still be: the restart cut it off. Without this it would sit in
+      // Blocked or Working (red, "may be stuck") until someone reopened it.
+      if (bootedAt && lastT < bootedAt && (s.state === 'need' || s.state === 'work' || s.state === 'quiet')) {
+        s.interruptedFrom = s.state;
+        s.state = 'idle';
+        s.interrupted = true;
+        s.ask = null;
+        s.since = lastT;
       }
 
       // Activity bar over the last hour, oldest slot first.
@@ -232,7 +253,12 @@
       case 'turn':
         if (s.fresh) return 'Opened, waiting for your first message';
         return s.lastTurnMs !== null ? 'Finished a turn after ' + dur(s.lastTurnMs) : 'Finished a turn';
-      case 'idle': return 'Last: ' + (s.lastAction || 'activity').toLowerCase();
+      case 'idle':
+        if (s.interrupted) {
+          return (s.interruptedFrom === 'need' ? 'Was waiting on you' : 'Was working') +
+            ' when the computer restarted · open it to carry on';
+        }
+        return 'Last: ' + (s.lastAction || 'activity').toLowerCase();
       case 'closed': return 'Closed';
     }
     return '';

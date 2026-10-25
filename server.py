@@ -281,6 +281,29 @@ def api_events() -> JSONResponse:
     return JSONResponse(content=parse_all_events(CONFIG["event_files"]))
 
 
+_BOOTTIME = re.compile(r"sec\s*=\s*(\d+)")
+
+
+def boot_time() -> Optional[float]:
+    """The machine's last boot, epoch seconds: macOS kern.boottime, Linux btime; else None."""
+    try:
+        import subprocess
+        out = subprocess.run(["/usr/sbin/sysctl", "-n", "kern.boottime"], capture_output=True,
+                             text=True, timeout=2).stdout
+        m = _BOOTTIME.search(out or "")
+        if m:
+            return float(m.group(1))
+    except (OSError, ValueError, subprocess.SubprocessError):
+        pass
+    try:
+        for line in pathlib.Path("/proc/stat").read_text().splitlines():
+            if line.startswith("btime "):
+                return float(line.split()[1])
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
 @app.get("/api/config")
 def api_config() -> JSONResponse:
     """Return only the safe config fields the frontend needs to render itself."""
@@ -293,6 +316,9 @@ def api_config() -> JSONResponse:
         "actions_mode": mode,
         "content_mode": CONFIG.get("content_mode", "inline"),
         "telegram_configured": _telegram_configured(),
+        # When this machine last started (epoch seconds), so the page can tell
+        # sessions cut off by a restart from sessions that are still running.
+        "booted_at": boot_time(),
     }
     # Only browser-acting modes need the write-back token, and only the
     # same-origin page can read it (cross-origin sites cannot read this response).
