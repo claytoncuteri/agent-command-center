@@ -3,6 +3,9 @@
 
   "event_file": "./events.jsonl",
 
+  "_event_files_comment": "Optional. A list of NDJSON logs merged into one view (overrides event_file). Paths expand ~; missing files are tolerated. Example: [\"~/.agent-command-center/events.jsonl\", \"./events.jsonl\"].",
+  "event_files": null,
+
   "bind": "127.0.0.1",
   "port": 7000,
 

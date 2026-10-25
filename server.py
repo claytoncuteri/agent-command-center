@@ -26,7 +26,11 @@ import uvicorn
 # ── Config ─────────────────────────────────────────────────────────────────────
 
 _DEFAULTS: dict = {
+    # One file, or several merged into one view (e.g. a laptop stream plus a
+    # server stream). "event_files" wins when set; "event_file" is kept for
+    # older configs. Missing files are tolerated and simply contribute nothing.
     "event_file": "./events.jsonl",
+    "event_files": None,
     "bind": "127.0.0.1",
     "port": 7000,
     "title": "Agent Command Center",
@@ -68,6 +72,17 @@ def load_config() -> dict:
             cfg.update(overrides)
         except Exception as exc:
             print(f"[acc] Warning: could not load config.json — {exc}")
+    # Normalise the event source(s) into a list of expanded paths.
+    files = cfg.get("event_files")
+    if isinstance(files, str):
+        files = [files]
+    if not isinstance(files, list) or not files:
+        files = [cfg.get("event_file") or _DEFAULTS["event_file"]]
+    cfg["event_files"] = [
+        str(pathlib.Path(p).expanduser()) for p in files if isinstance(p, str) and p.strip()
+    ] or [_DEFAULTS["event_file"]]
+    # The first file stays the primary one (content sandbox root, legacy readers).
+    cfg["event_file"] = cfg["event_files"][0]
     # Validate action mode, fall back to the safe default.
     mode = cfg.get("actions_mode")
     if mode not in _ACTION_MODES:
@@ -122,6 +137,25 @@ def parse_events(path: str) -> list[dict]:
     return events
 
 
+def parse_all_events(paths: list[str]) -> list[dict]:
+    """Merge the events of several NDJSON files. The UI orders them by `ts`."""
+    events: list[dict] = []
+    for path in paths:
+        events.extend(parse_events(path))
+    return events
+
+
+def _sizes(paths: list[str]) -> tuple:
+    """Current size of each source file (0 when missing); changes trigger a push."""
+    out = []
+    for path in paths:
+        try:
+            out.append(pathlib.Path(path).stat().st_size)
+        except OSError:
+            out.append(0)
+    return tuple(out)
+
+
 # ── FastAPI app ────────────────────────────────────────────────────────────────
 
 app = FastAPI(title="Agent Command Center", docs_url=None, redoc_url=None)
@@ -130,8 +164,8 @@ STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 @app.get("/api/events")
 def api_events() -> JSONResponse:
-    """Return all parsed events."""
-    return JSONResponse(content=parse_events(CONFIG["event_file"]))
+    """Return all parsed events from every configured source."""
+    return JSONResponse(content=parse_all_events(CONFIG["event_files"]))
 
 
 @app.get("/api/config")
@@ -282,7 +316,7 @@ def _structured_diff(
 def _find_awaiting_approval(approval_id: str) -> Optional[dict]:
     """Latest awaiting_approval event for an approval_id, from the event stream."""
     match: Optional[dict] = None
-    for e in parse_events(CONFIG["event_file"]):
+    for e in parse_all_events(CONFIG["event_files"]):
         if e.get("approval_id") == approval_id and e.get("status") == "awaiting_approval":
             match = e
     return match
@@ -517,23 +551,20 @@ async def api_prompt(
 @app.get("/api/stream")
 async def api_stream(request: Request) -> StreamingResponse:
     """
-    Server-Sent Events endpoint. Emits the full event list whenever the
-    source file changes, plus a keepalive comment every 5 seconds.
+    Server-Sent Events endpoint. Emits the full event list whenever any
+    source file changes, plus a keepalive comment every 2 seconds.
     """
-    event_file = CONFIG["event_file"]
+    event_files = CONFIG["event_files"]
 
     async def generator() -> AsyncIterator[str]:
-        last_size: int = -1
+        last_sizes: Optional[tuple] = None
         while True:
             if await request.is_disconnected():
                 break
-            try:
-                size = pathlib.Path(event_file).stat().st_size
-            except OSError:
-                size = 0
-            if size != last_size:
-                last_size = size
-                events = parse_events(event_file)
+            sizes = _sizes(event_files)
+            if sizes != last_sizes:
+                last_sizes = sizes
+                events = parse_all_events(event_files)
                 payload = json.dumps(events)
                 yield f"data: {payload}\n\n"
             else:
@@ -595,10 +626,11 @@ def _maybe_start_telegram() -> None:
 if __name__ == "__main__":
     host = CONFIG["bind"]
     port = int(CONFIG["port"])
-    event_file = CONFIG["event_file"]
     mode = CONFIG.get("actions_mode", "readonly")
     print(f"[acc] Agent Command Center")
-    print(f"[acc] Event file  : {pathlib.Path(event_file).resolve()}")
+    for i, event_file in enumerate(CONFIG["event_files"]):
+        label = "Event file  " if i == 0 else "            "
+        print(f"[acc] {label}: {pathlib.Path(event_file).resolve()}")
     print(f"[acc] Dashboard   : http://{host}:{port}")
     print(f"[acc] Action mode : {mode}")
     print(f"[acc] Content mode: {CONFIG.get('content_mode', 'inline')}")

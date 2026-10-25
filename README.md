@@ -45,6 +45,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 | Key | Default | Notes |
 |---|---|---|
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
+| `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
 | `title` | `"Agent Command Center"` | Displayed in the header and browser tab. |
@@ -213,6 +214,81 @@ emit("events.jsonl", agent="MY_AGENT", action="Processing batch", status="finish
 See [CONTRACT.md](CONTRACT.md) for the full schema including approval flows,
 `level: flash`, and all status values.
 
+### Several event files at once
+
+Set `event_files` (a list) instead of `event_file` to merge streams from more
+than one source into one dashboard, for example your laptop's Claude Code
+sessions plus a server-side agent stack:
+
+```json
+"event_files": ["~/.agent-command-center/events.jsonl", "/mnt/agents/events.jsonl"]
+```
+
+Paths expand `~`. A missing file is fine; it just contributes nothing until it
+appears. The first file is the primary one (it anchors the reference-mode
+content sandbox when `content_dir` is unset).
+
+---
+
+## Claude Code sessions
+
+`examples/claude_code_hook.py` turns every [Claude Code](https://claude.com/claude-code)
+session into an agent on the dashboard, with no changes to your projects. It
+is a Claude Code *hook*: Claude Code runs it at session start, when you send a
+prompt, when a tool needs your permission, when a tool finishes, and when the
+turn ends, and the script appends one `acc/1` event per moment. Permission
+prompts and questions waiting on you show up in the approvals panel; answering
+them in Claude Code clears them.
+
+**Privacy by construction.** The hook reads only the event name, the session
+id, the working folder, the tool name and two flags. It never reads your
+prompt, tool inputs or outputs, the assistant's reply, or the transcript, and
+every `detail` is a fixed template (`permission: Bash`). It prints nothing and
+always exits 0, so it cannot block or steer a session. See the docstring at the
+top of the script for the full event mapping.
+
+**1. Install a pinned copy.** Don't point Claude Code at this working tree: a
+`git pull` would change code that runs inside every session. Copy it:
+
+```bash
+mkdir -p ~/.claude/hooks
+cp examples/claude_code_hook.py ~/.claude/hooks/acc_claude_code_hook.py
+shasum -a 256 ~/.claude/hooks/acc_claude_code_hook.py   # keep this for later checks
+```
+
+**2. Register the hooks** in `~/.claude/settings.json` (user level, so every
+project reports). Merge this into any `hooks` block you already have:
+
+```json
+{
+  "hooks": {
+    "SessionStart":       [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "UserPromptSubmit":   [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "PermissionRequest":  [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "PermissionDenied":   [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "PreToolUse":         [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "PostToolUse":        [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
+    "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
+    "Stop":               [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "SessionEnd":         [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}]
+  }
+}
+```
+
+`PostToolUse` fires on every tool call, so it runs `async` (in the background,
+never delaying the session). The others are quick and run inline with a short
+timeout. Python 3.8 or newer is enough; the script has no dependencies.
+
+**3. Point the dashboard at the file.** Events go to
+`~/.agent-command-center/events.jsonl` (override with `ACC_EVENT_FILE`). Set
+`"event_file": "~/.agent-command-center/events.jsonl"` in `config.json`, or add
+it to `event_files` next to your other streams.
+
+Each session appears as an agent named after its project folder (a Claude
+Code worktree reports its repository's folder). Events also carry `host` and
+`session` fields for later filtering; the dashboard ignores fields it does not
+know. Tests: `python -m unittest tests.test_claude_code_hook`.
+
 ---
 
 ## Optional Telegram relay
@@ -247,8 +323,10 @@ agent-command-center/
 ├── static/
 │   ├── index.html         # Single-page dashboard (no JS framework)
 │   └── emblem.svg         # Default geometric emblem (swappable via config)
-└── examples/
-    └── emit_demo.py       # Demo emitter — run to see the dashboard populate
+├── examples/
+│   ├── emit_demo.py       # Demo emitter — run to see the dashboard populate
+│   └── claude_code_hook.py # Claude Code hook: every session becomes an agent
+└── tests/                 # python -m unittest discover tests
 ```
 
 ---
