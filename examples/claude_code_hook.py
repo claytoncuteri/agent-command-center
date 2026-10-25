@@ -220,6 +220,7 @@ def make_event(
     steps_total: Optional[int] = None,
     steps_current: Optional[int] = None,
     pause: Optional[bool] = None,
+    time_limit: Optional[int] = None,
 ) -> Dict[str, Any]:
     ev: Dict[str, Any] = {
         "schema": SCHEMA,
@@ -250,6 +251,8 @@ def make_event(
             ev["steps_current"] = int(steps_current)
     if pause:
         ev["pause"] = True
+    if time_limit:
+        ev["time_limit"] = int(time_limit)
     return ev
 
 
@@ -536,6 +539,37 @@ def latest_human_message(path: Any) -> Optional[str]:
     return None
 
 
+# "you have 10 minutes to complete this task, if not done then please pause":
+# a time limit, not a pause request. Only the limit (in seconds) is kept.
+_LIMIT_PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
+    r"\byou\s+have\s+(\d{1,4})\s*(minutes?|mins?|m|hours?|hrs?|h)\b",
+    r"\b(pause|stop)\s+(in|after)\s+(\d{1,4})\s*(minutes?|mins?|m|hours?|hrs?|h)\b",
+    r"\b(within|in\s+the\s+next)\s+(\d{1,4})\s*(minutes?|mins?|hours?|hrs?)\b",
+    r"\b(do|finish|complete|get)\s+(it|this|that|everything)(\s+done)?\s+in\s+(\d{1,4})\s*(minutes?|mins?|m|hours?|hrs?|h)\b",
+)]
+
+
+def time_limit_seconds(prompt: Any) -> Optional[int]:
+    """Seconds of a time limit the prompt sets (opt-in with ACC_DETECT_PAUSE=1), else None."""
+    if os.environ.get("ACC_DETECT_PAUSE") != "1" or not isinstance(prompt, str):
+        return None
+    text = prompt.strip()
+    if not text or len(text) > _PAUSE_MAX_CHARS:
+        return None
+    for pat in _LIMIT_PATTERNS:
+        m = pat.search(text)
+        if m:
+            nums = [g for g in m.groups() if g and g.isdigit()]
+            unit = m.groups()[-1].lower()
+            if not nums:
+                continue
+            n = int(nums[0])
+            secs = n * 3600 if unit.startswith("h") else n * 60
+            if 0 < secs <= 24 * 3600:
+                return secs
+    return None
+
+
 def is_pause_request(prompt: Any) -> bool:
     """True when ACC_DETECT_PAUSE=1 and the prompt asks the session to pause."""
     if os.environ.get("ACC_DETECT_PAUSE") != "1" or not isinstance(prompt, str):
@@ -543,6 +577,8 @@ def is_pause_request(prompt: Any) -> bool:
     text = prompt.strip()
     if not text or len(text) > _PAUSE_MAX_CHARS:
         return False
+    if time_limit_seconds(text):
+        return False  # "pause if not done in 10 minutes" is a time limit
     return any(p.search(text) for p in _PAUSE_PATTERNS)
 
 
@@ -724,12 +760,15 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
 
     elif event == "UserPromptSubmit":
         close_approval(agent, session_id, state, status="declined", result="not run")
+        limit = time_limit_seconds(data.get("prompt"))
         pause = is_pause_request(data.get("prompt"))
+        state.pop("pause", None)
+        state.pop("limit", None)
         if pause:
             state["pause"] = True
-        else:
-            state.pop("pause", None)
-        emit("Working", "started", doing="Thinking", pause=pause or None)
+        if limit:
+            state["limit"] = limit
+        emit("Working", "started", doing="Thinking", pause=pause or None, time_limit=limit)
         set_doing("Thinking")
 
     elif event == "PermissionRequest":
@@ -765,7 +804,12 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
             now = time.time()
             if now - float(state.get("pause_checked") or 0) >= _PAUSE_CHECK_SECONDS:
                 state["pause_checked"] = now
-                if is_pause_request(latest_human_message(data.get("transcript_path"))):
+                latest = latest_human_message(data.get("transcript_path"))
+                limit = time_limit_seconds(latest)
+                if limit and not state.get("limit"):
+                    state["limit"] = limit
+                    emit("Time limit set", "info", time_limit=limit)
+                elif is_pause_request(latest):
                     state["pause"] = True
                     emit("Pause requested", "info", pause=True)
                 save_state(session_id, state)

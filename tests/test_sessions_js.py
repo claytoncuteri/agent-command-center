@@ -339,6 +339,23 @@ class TestSessionModel(unittest.TestCase):
         s = self.one([ev(2, "info", "Pause requested", pause=True)])
         self.assertIn(s["state"], ("turn", "idle", "paused"))
 
+    def test_time_limit_countdown_then_ready_or_paused(self):
+        s = self.one([ev(4, "started", "Working", doing="Thinking", time_limit=600), ev(1, "started", "Working", doing="Editing files")])
+        self.assertTrue(s["line"].startswith("Time limit \u00b7 6m left \u00b7 Editing files"), s["line"])
+        s = self.one([ev(15, "started", "Working", doing="Thinking", time_limit=600), ev(1, "started", "Working", doing="Editing files")])
+        self.assertTrue(s["line"].startswith("Over the time limit by 5m"), s["line"])
+        done = self.one([ev(9, "started", "Working", doing="Thinking", time_limit=600),
+                         ev(7, "started", "Working", steps_done=4, steps_total=4), ev(5, "finished", "Your turn")])
+        self.assertEqual((done["state"], done["line"]), ("turn", "Finished within the 10m time limit"))
+        cut = self.one([ev(14, "started", "Working", doing="Thinking", time_limit=600),
+                        ev(7, "started", "Working", steps_done=2, steps_total=5, steps_current=3), ev(3, "finished", "Your turn")])
+        self.assertEqual(cut["state"], "paused")
+        self.assertTrue(cut["line"].startswith("Paused at the 10m time limit \u00b7 2 of 5 steps done"), cut["line"])
+        clock = self.one([ev(14, "started", "Working", doing="Thinking", time_limit=600), ev(3, "finished", "Your turn")])
+        self.assertEqual(clock["state"], "paused", "no task list: ended at the limit")
+        early = self.one([ev(9, "started", "Working", doing="Thinking", time_limit=600), ev(6, "finished", "Your turn")])
+        self.assertEqual(early["state"], "turn", "no task list: ended well before the limit")
+
     def test_paused_sorts_between_ready_and_idle(self):
         out = self.derive([
             ev(7 * 60, "finished", "Your turn", session="idle"),
