@@ -22,7 +22,7 @@ HARNESS = r"""
 const m = require(process.argv[1]);
 const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const now = Date.parse(input.now);
-const out = m.deriveSessions(input.events, now);
+const out = m.deriveSessions(input.events, now, input.bootedAt ? { bootedAt: Date.parse(input.bootedAt) } : undefined);
 out.sessions.forEach(s => { s.line = m.describe(s, now); s.timeline = s.events.map(m.eventLine); delete s.events; });
 process.stdout.write(JSON.stringify(out));
 """
@@ -44,10 +44,10 @@ def ev(minutes_ago, status, action, session="s1", agent="Demo", **extra):
 
 @unittest.skipIf(NODE is None, "node is not installed")
 class TestSessionModel(unittest.TestCase):
-    def derive(self, events):
+    def derive(self, events, booted_at=None):
         proc = subprocess.run(
             [NODE, "-e", HARNESS, str(MODEL)],
-            input=json.dumps({"now": NOW, "events": events}),
+            input=json.dumps({"now": NOW, "events": events, "bootedAt": booted_at}),
             capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -211,6 +211,46 @@ class TestSessionModel(unittest.TestCase):
             "You sent a message; working",
             "Session opened",
         ])
+
+    def test_restart_cuts_off_working_and_blocked_sessions(self):
+        booted = "2026-10-24T11:30:00.000Z"  # 30 minutes before NOW
+        out = self.derive([
+            ev(50, "started", "Working", doing="Editing files", session="work"),
+            ev(45, "awaiting_approval", "Needs permission", approval_id="p", detail="permission: Bash", session="need"),
+            ev(40, "finished", "Your turn", session="turn"),
+            ev(5, "started", "Working", doing="Running a command", session="after"),
+        ], booted_at=booted)
+        by = {s["session"]: s for s in out["sessions"]}
+        self.assertEqual(by["work"]["state"], "idle")
+        self.assertTrue(by["work"]["interrupted"])
+        self.assertEqual(by["work"]["line"], "Was working when the computer restarted · open it to carry on")
+        self.assertEqual(by["need"]["state"], "idle")
+        self.assertIsNone(by["need"]["ask"])
+        self.assertTrue(by["need"]["line"].startswith("Was waiting on you"))
+        self.assertEqual(by["turn"]["state"], "turn", "a finished turn is still ready after a restart")
+        self.assertEqual(by["after"]["state"], "work", "activity after the restart is live")
+        self.assertEqual(out["counts"]["need"], 0)
+
+    def test_orphan_ask_cleared_at_the_next_turn(self):
+        s = self.one([
+            ev(40, "awaiting_approval", "Question for you", approval_id="orphan", detail="question"),
+            ev(40, "awaiting_approval", "Question for you", approval_id="kept", detail="question"),
+            ev(38, "approved", "Question answered", approval_id="kept"),
+            ev(30, "finished", "Your turn"),
+            ev(5, "started", "Working", doing="Thinking"),
+        ])
+        self.assertEqual(s["state"], "work", "the orphaned ask must not keep the session Blocked")
+
+    def test_other_stacks_keep_asks_across_tasks(self):
+        out = self.derive([
+            {"ts": "2026-10-24T11:50:00Z", "agent": "KEEPER", "action": "Email", "status": "awaiting_approval", "approval_id": "a"},
+            {"ts": "2026-10-24T11:55:00Z", "agent": "KEEPER", "action": "Inbox scan", "status": "finished"},
+        ])
+        self.assertEqual(out["sessions"][0]["state"], "need")
+
+    def test_no_boot_time_keeps_old_behaviour(self):
+        s = self.one([ev(50, "started", "Working", doing="Editing files")])
+        self.assertEqual(s["state"], "quiet")
 
     def test_bad_events_are_ignored(self):
         out = self.derive([{"agent": "X"}, {"ts": "nope", "agent": "Y"}, None, {"ts": NOW}])

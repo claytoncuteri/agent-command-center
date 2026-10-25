@@ -176,7 +176,20 @@ class TestApprovals(HookCase):
         self.run_hook("PermissionRequest", tool_name="Bash")
         evs = self.run_hook("SessionEnd", reason="other")
         self.assertEqual([e["status"] for e in evs], ["awaiting_approval", "declined", "idle"])
-        self.assertEqual(os.listdir(os.environ["ACC_STATE_DIR"]), [])
+        # The open-ask state is gone; only the session's tiny lock file stays.
+        self.assertEqual([n for n in os.listdir(os.environ["ACC_STATE_DIR"]) if not n.endswith(".lock")], [])
+
+    def test_resume_clears_a_prompt_lost_in_a_restart(self):
+        self.run_hook("PermissionRequest", tool_name="Bash")
+        evs = self.run_hook("SessionStart", source="resume")
+        self.assertEqual([e["status"] for e in evs], ["awaiting_approval", "declined", "idle"])
+        self.assertEqual(evs[1]["approval_id"], evs[0]["approval_id"])
+        self.assertEqual(evs[1]["result"], "not run")
+
+    def test_compact_keeps_an_open_prompt(self):
+        self.run_hook("PermissionRequest", tool_name="Bash")
+        evs = self.run_hook("SessionStart", source="compact")
+        self.assertEqual([e["status"] for e in evs], ["awaiting_approval", "idle"])
 
     def test_fresh_session_start_drops_stale_state(self):
         self.run_hook("PermissionRequest", tool_name="Bash")
@@ -279,6 +292,44 @@ class TestPlainLanguage(HookCase):
         self.run_hook("PermissionRequest", tool_name="Bash", session_id="aaaaaaaa-1")
         evs = self.run_hook("PostToolUse", tool_name="Bash", session_id="bbbbbbbb-2")
         self.assertEqual(len(evs), 1, "session B must not close session A's approval")
+
+
+class TestConcurrency(HookCase):
+    """Hooks that fire at the same instant must not both open an ask."""
+
+    def test_simultaneous_permission_request_and_pre_tool_use(self):
+        import threading
+        env = dict(os.environ)
+        payloads = [
+            {"hook_event_name": "PermissionRequest", "tool_name": "AskUserQuestion", "session_id": "race0001-x", "cwd": "/p/Demo"},
+            {"hook_event_name": "PreToolUse", "tool_name": "AskUserQuestion", "session_id": "race0001-x", "cwd": "/p/Demo"},
+        ]
+        for _round in range(25):
+            if os.path.exists(self.event_file):
+                os.remove(self.event_file)
+            for name in os.listdir(os.environ["ACC_STATE_DIR"]) if os.path.isdir(os.environ["ACC_STATE_DIR"]) else []:
+                if name.endswith(".json"):
+                    os.remove(os.path.join(os.environ["ACC_STATE_DIR"], name))
+            procs = [subprocess.Popen([sys.executable, str(HOOK_PATH)], stdin=subprocess.PIPE,
+                                      stdout=subprocess.PIPE, env=env) for _ in payloads]
+            barrier = threading.Barrier(len(procs))
+
+            def feed(p, data):
+                barrier.wait()
+                p.communicate(json.dumps(data).encode(), timeout=20)
+
+            threads = [threading.Thread(target=feed, args=(p, d)) for p, d in zip(procs, payloads)]
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join()
+            opened = [e for e in self.events() if e["status"] == "awaiting_approval"]
+            self.assertEqual(len(opened), 1, "round %d opened %d asks" % (_round, len(opened)))
+
+    def test_lock_file_lives_beside_state(self):
+        self.run_hook("UserPromptSubmit", session_id="lockcheck-1")
+        names = os.listdir(os.environ["ACC_STATE_DIR"])
+        self.assertTrue(any(n.endswith(".lock") for n in names), names)
 
 
 class TestPrivacy(HookCase):

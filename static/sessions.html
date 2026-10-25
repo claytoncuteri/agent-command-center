@@ -113,6 +113,11 @@ button { font: inherit; color: inherit; }
 .sec .hint { margin-left: auto; min-width: 0; font-size: 12px; color: var(--faint); text-align: right; }
 
 .list { display: flex; flex-direction: column; gap: 8px; }
+.offline { margin: -4px 0 12px; padding: 11px 14px; border-radius: 14px; font-size: 14px; color: var(--text);
+  border: 1px solid rgba(255,128,128,.45); background: rgba(255,128,128,.12); }
+.offline[hidden] { display: none; }
+.offline small { display: block; color: var(--sub); font-size: 12.5px; margin-top: 2px; }
+@media (min-width: 900px) { .offline { grid-column: 1 / -1; } }
 .group[hidden] { display: none; }
 .filter-bar { display: flex; align-items: center; gap: 10px; margin: 2px 2px 4px; font-size: 13px; color: var(--sub); }
 .filter-bar[hidden] { display: none; }
@@ -229,6 +234,7 @@ button { font: inherit; color: inherit; }
     <span class="live wait" id="live"><i></i><span id="liveLabel">Connecting</span></span>
   </header>
 
+  <div class="offline" id="offline" hidden role="status"></div>
   <section class="summary" id="summary" aria-label="Sessions by state"></section>
   <nav class="chips" id="chips" aria-label="Filter by project"></nav>
 
@@ -270,6 +276,7 @@ button { font: inherit; color: inherit; }
   'use strict';
   var M = window.ACCSessions;
   var EVENTS = [];
+  var BOOTED_AT = null;  // ms; when the machine running the sessions last started
   var LINKS = {};   // session (8 chars) -> {app, web} links, when claude_app_links is on
   // On this computer, open the desktop app; from a phone or another device,
   // open the session's Remote Control page on claude.ai (the app link would
@@ -380,7 +387,7 @@ button { font: inherit; color: inherit; }
 
   function render() {
     var t = now();
-    MODEL = M.deriveSessions(EVENTS, t);
+    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT });
     var all = MODEL.sessions;
     // Tile counts follow the project filter, so a number always matches its list.
     var inProject = all.filter(function (s) { return !ui.project || s.project === ui.project; });
@@ -522,21 +529,54 @@ button { font: inherit; color: inherit; }
     }).catch(function () {});
   }
 
+  var ES = null, retryTimer = null, offlineSince = null;
+
   function setLive(state) {
     var el = $('live');
     el.className = 'live' + (state === 'on' ? '' : state === 'off' ? ' off' : ' wait');
     $('liveLabel').textContent = state === 'on' ? 'Live' : state === 'off' ? 'Offline' : 'Connecting';
+    if (state === 'off' && offlineSince === null) offlineSince = now();
+    if (state === 'on') offlineSince = null;
+    showOffline();
+  }
+
+  // When the computer sleeps, restarts or drops off the network, the page keeps
+  // the last known picture and says so, instead of quietly showing old data.
+  function showOffline() {
+    var box = $('offline');
+    if (offlineSince === null || now() - offlineSince < 8000) { box.hidden = true; return; }
+    var ago = lastUpdate ? M.rel(now() - lastUpdate) : null;
+    box.innerHTML = 'Can\u2019t reach the computer running your sessions. It may be asleep, restarting or offline.' +
+      '<small>Showing what it last sent' + (ago ? ' (' + (ago === 'now' ? 'just now' : ago + ' ago') + ')' : '') +
+      '. This reconnects on its own.</small>';
+    box.hidden = false;
   }
 
   function connect() {
-    var es = new EventSource('/api/stream');
-    es.onopen = function () { setLive('on'); };
-    es.onmessage = function (m) {
+    if (ES) { try { ES.close(); } catch (_) {} }
+    ES = new EventSource('/api/stream');
+    ES.onopen = function () { setLive('on'); loadLinks(); };
+    ES.onmessage = function (m) {
       try { EVENTS = JSON.parse(m.data) || []; } catch (_) { return; }
       lastUpdate = now(); setLive('on'); render();
     };
-    es.onerror = function () { setLive('off'); };
+    ES.onerror = function () {
+      setLive('off');
+      // The browser retries on its own unless it gave up (the stream closed);
+      // then start over after a pause.
+      if (ES.readyState === 2 && !retryTimer) {
+        retryTimer = setTimeout(function () { retryTimer = null; connect(); }, 5000);
+      }
+    };
   }
+
+  // Back to the page (phone unlocked, app reopened, laptop woke): refresh now.
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    if (!ES || ES.readyState === 2 || offlineSince !== null) connect();
+    render();
+  });
+  window.addEventListener('online', function () { connect(); });
 
   var STAR = '<path d="M12 1.6l2.9 6.6 7.2.7-5.4 4.8 1.6 7.1L12 17.1l-6.3 3.7 1.6-7.1L1.9 8.9l7.2-.7z"/>';
 
@@ -565,6 +605,7 @@ button { font: inherit; color: inherit; }
 
   fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
     if (cfg && cfg.title) $('brandTitle').textContent = cfg.title;
+    if (cfg && typeof cfg.booted_at === 'number') BOOTED_AT = cfg.booted_at * 1000;
     if (cfg && cfg.logo) renderMarks(cfg.logo);
     render();
   }).catch(function () {});
@@ -573,7 +614,7 @@ button { font: inherit; color: inherit; }
   }).catch(function () { setLive('off'); });
   connect();
   loadLinks();
-  setInterval(render, 15000);
+  setInterval(function () { render(); showOffline(); }, 15000);
   setInterval(loadLinks, 60000);
 })();
 </script>
