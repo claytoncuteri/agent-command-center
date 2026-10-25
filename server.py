@@ -56,6 +56,10 @@ _DEFAULTS: dict = {
     # or "classic" (agent cards and the approvals workflow). Both stay reachable
     # at /sessions and /classic.
     "view": "sessions",
+    # macOS + Claude desktop app only: link each Claude Code session row to the
+    # same session in the app ("Open in Claude"). Reads only two id fields from
+    # the app's per-session records. Off unless you turn it on.
+    "claude_app_links": False,
 }
 
 _VIEWS = {"sessions": "sessions.html", "classic": "index.html"}
@@ -198,6 +202,69 @@ def api_config() -> JSONResponse:
     if mode in _BROWSER_ACTION_MODES:
         payload["actions_token"] = ACTIONS_TOKEN
     return JSONResponse(content=payload)
+
+
+# ── Claude desktop app links ────────────────────────────────────────────────────
+#
+# The desktop app keeps one small JSON record per Code session. Two of its
+# fields tie the app's session to the Claude Code session our hook reports:
+# `sessionId` ("local_<uuid>", the app's id) and `cliSessionId` (Claude Code's
+# id, whose first 8 characters are the event stream's `session`). Nothing else
+# in the record is read or returned.
+
+APP_SESSIONS_DIR = (
+    pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+)
+_APP_ID = re.compile(r"^local_[0-9a-f-]{8,64}$")
+_APP_RECORD_MAX_BYTES = 2_000_000
+_LINKS_TTL_SECONDS = 30.0
+_links_cache: dict = {"at": 0.0, "root": None, "links": {}}
+
+
+def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] = None) -> dict:
+    """Map the event stream's 8-character session id to a claude:// link."""
+    root = pathlib.Path(root) if root is not None else APP_SESSIONS_DIR
+    now = now if now is not None else datetime.now(timezone.utc).timestamp()
+    if _links_cache["root"] == str(root) and now - _links_cache["at"] < _LINKS_TTL_SECONDS:
+        return _links_cache["links"]
+    links: dict = {}
+    newest: dict = {}
+    try:
+        records = list(root.glob("*/*/local_*.json"))
+    except OSError:
+        records = []
+    for path in records:
+        try:
+            st = path.stat()
+            if st.st_size > _APP_RECORD_MAX_BYTES:
+                continue
+            with path.open(encoding="utf-8") as f:
+                rec = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(rec, dict):
+            continue
+        app_id, cli_id = rec.get("sessionId"), rec.get("cliSessionId")
+        if not (isinstance(app_id, str) and _APP_ID.match(app_id)):
+            continue
+        if not (isinstance(cli_id, str) and len(cli_id) >= 8):
+            continue
+        key = cli_id[:8]
+        # Two app records for one Claude Code session (a fork): keep the newest.
+        if key in newest and newest[key] >= st.st_mtime:
+            continue
+        newest[key] = st.st_mtime
+        links[key] = "claude://claude.ai/epitaxy/" + app_id
+    _links_cache.update({"at": now, "root": str(root), "links": links})
+    return links
+
+
+@app.get("/api/links")
+def api_links() -> JSONResponse:
+    """Session id (8 chars) -> link that opens it in the Claude desktop app."""
+    if not CONFIG.get("claude_app_links"):
+        return JSONResponse(content={})
+    return JSONResponse(content=claude_app_links())
 
 
 # ── Reviewable content (reference mode) ──────────────────────────────────────

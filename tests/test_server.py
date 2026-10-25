@@ -125,5 +125,75 @@ class TestViews(unittest.TestCase):
             self.assertTrue((server.STATIC_DIR / name).is_file(), name)
 
 
+class TestClaudeAppLinks(unittest.TestCase):
+    """The desktop-app link lookup reads only sessionId and cliSessionId."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = pathlib.Path(self.tmp.name)
+        self.dir = self.root / "acct" / "org"
+        self.dir.mkdir(parents=True)
+        server._links_cache.update({"at": 0.0, "root": None, "links": {}})
+        self.t = 1_000_000.0
+
+    def tearDown(self):
+        self.tmp.cleanup()
+        server._links_cache.update({"at": 0.0, "root": None, "links": {}})
+
+    def record(self, name, body):
+        path = self.dir / name
+        path.write_text(body if isinstance(body, str) else json.dumps(body), encoding="utf-8")
+        return path
+
+    def links(self, advance=100.0):
+        self.t += advance  # past the cache window unless advance is small
+        return server.claude_app_links(self.root, now=self.t)
+
+    def test_maps_cli_prefix_to_app_link(self):
+        self.record("local_1f9b14d8-71c3-4861-9f20-2068589d2c2d.json", {
+            "sessionId": "local_1f9b14d8-71c3-4861-9f20-2068589d2c2d",
+            "cliSessionId": "444e0301-d613-4369-a459-1e4ea874b16f",
+            "permissionMode": "default", "promptAppendSnapshot": "SECRET-ish text",
+        })
+        self.assertEqual(self.links(), {"444e0301": "claude://claude.ai/epitaxy/local_1f9b14d8-71c3-4861-9f20-2068589d2c2d"})
+
+    def test_rejects_bad_records(self):
+        self.record("local_a.json", "{not json")
+        self.record("local_b.json", {"sessionId": "javascript:alert(1)", "cliSessionId": "abcdefgh-1"})
+        self.record("local_c.json", {"sessionId": "local_aaaaaaaa-1111", "cliSessionId": "short"})
+        self.record("local_d.json", ["a", "list"])
+        self.record("local_e.json", {"sessionId": "local_bbbbbbbb-2222"})
+        self.assertEqual(self.links(), {})
+
+    def test_oversized_record_skipped(self):
+        big = {"sessionId": "local_cccccccc-3333", "cliSessionId": "cccccccc-x", "pad": "x" * 2_100_000}
+        self.record("local_f.json", big)
+        self.assertEqual(self.links(), {})
+
+    def test_fork_keeps_newest_record(self):
+        old = self.record("local_old.json", {"sessionId": "local_00000000-aaaa", "cliSessionId": "deadbeef-1"})
+        new = self.record("local_new.json", {"sessionId": "local_11111111-bbbb", "cliSessionId": "deadbeef-1"})
+        os.utime(old, (1000, 1000))
+        os.utime(new, (2000, 2000))
+        self.assertEqual(self.links()["deadbeef"], "claude://claude.ai/epitaxy/local_11111111-bbbb")
+
+    def test_cached_for_a_while_then_refreshed(self):
+        self.assertEqual(self.links(), {})
+        self.record("local_g.json", {"sessionId": "local_22222222-cccc", "cliSessionId": "feedface-1"})
+        self.assertEqual(self.links(advance=5.0), {}, "within the cache window")
+        self.assertIn("feedface", self.links(advance=60.0))
+
+    def test_missing_root(self):
+        self.assertEqual(server.claude_app_links(self.root / "nope", now=self.t), {})
+
+    def test_endpoint_off_by_default(self):
+        prev = server.CONFIG.get("claude_app_links")
+        try:
+            server.CONFIG["claude_app_links"] = False
+            self.assertEqual(json.loads(server.api_links().body), {})
+        finally:
+            server.CONFIG["claude_app_links"] = prev
+
+
 if __name__ == "__main__":
     unittest.main()
