@@ -362,7 +362,28 @@ class TestClaudeAppLinks(unittest.TestCase):
             "cliSessionId": "444e0301-d613-4369-a459-1e4ea874b16f",
             "permissionMode": "default", "promptAppendSnapshot": "SECRET-ish text",
         })
-        self.assertEqual(self.links(), {"444e0301": "claude://claude.ai/epitaxy/local_1f9b14d8-71c3-4861-9f20-2068589d2c2d"})
+        self.assertEqual(self.links(), {"444e0301": {
+            "app": "claude://claude.ai/epitaxy/local_1f9b14d8-71c3-4861-9f20-2068589d2c2d", "web": None}})
+
+    def test_remote_control_id_gives_web_link(self):
+        self.record("local_x.json", {
+            "sessionId": "local_22222222-dddd", "cliSessionId": "abcdef01-2",
+            "bridgeSessionIds": ["session_013EQoldOLDold", "session_014NewNewNewNew"],
+        })
+        self.assertEqual(self.links()["abcdef01"]["web"], "https://claude.ai/code/session_014NewNewNewNew")
+
+    def test_bad_remote_control_ids_ignored(self):
+        self.record("local_y.json", {
+            "sessionId": "local_33333333-eeee", "cliSessionId": "abcdef02-3",
+            "bridgeSessionIds": ["javascript:alert(1)", "session_../../x", 42, "session_short"],
+        })
+        self.record("local_z.json", {
+            "sessionId": "local_44444444-ffff", "cliSessionId": "abcdef03-4", "bridgeSessionIds": "session_999FakeFakeFakeX",
+        })
+        links = self.links()
+        self.assertIsNone(links["abcdef02"]["web"])
+        self.assertIsNone(links["abcdef03"]["web"])
+        self.assertTrue(links["abcdef02"]["app"].startswith("claude://"))
 
     def test_rejects_bad_records(self):
         self.record("local_a.json", "{not json")
@@ -382,7 +403,7 @@ class TestClaudeAppLinks(unittest.TestCase):
         new = self.record("local_new.json", {"sessionId": "local_11111111-bbbb", "cliSessionId": "deadbeef-1"})
         os.utime(old, (1000, 1000))
         os.utime(new, (2000, 2000))
-        self.assertEqual(self.links()["deadbeef"], "claude://claude.ai/epitaxy/local_11111111-bbbb")
+        self.assertEqual(self.links()["deadbeef"]["app"], "claude://claude.ai/epitaxy/local_11111111-bbbb")
 
     def test_cached_for_a_while_then_refreshed(self):
         self.assertEqual(self.links(), {})

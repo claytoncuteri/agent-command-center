@@ -253,7 +253,11 @@ button { font: inherit; color: inherit; }
   'use strict';
   var M = window.ACCSessions;
   var EVENTS = [];
-  var LINKS = {};   // session (8 chars) -> claude:// link, when claude_app_links is on
+  var LINKS = {};   // session (8 chars) -> {app, web} links, when claude_app_links is on
+  // On this computer, open the desktop app; from a phone or another device,
+  // open the session's Remote Control page on claude.ai (the app link would
+  // only reach the phone app's home screen).
+  var ON_THIS_MACHINE = ['127.0.0.1', 'localhost', '[::1]', '::1'].indexOf(location.hostname) >= 0;
   var MODEL = null;
   var lastUpdate = null;
   var openKey = null;
@@ -332,10 +336,15 @@ button { font: inherit; color: inherit; }
   }
 
   function linkFor(s) {
-    return (s.source === 'claude-code' && s.session && LINKS[s.session]) || null;
+    var entry = s.source === 'claude-code' && s.session && LINKS[s.session];
+    if (!entry) return null;
+    if (typeof entry === 'string') return ON_THIS_MACHINE ? entry : null;  // older server
+    return (ON_THIS_MACHINE ? entry.app : entry.web) || null;
   }
   function openLink(href, label) {
-    return '<a class="open-claude" href="' + esc(href) + '">' + esc(label) +
+    // A web link opens beside the dashboard so the dashboard stays where it was.
+    var web = /^https:\/\//.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '';
+    return '<a class="open-claude" href="' + esc(href) + '"' + web + '>' + esc(label) +
       ' <span aria-hidden="true">↗</span></a>';
   }
 
