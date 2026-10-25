@@ -47,7 +47,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
 | `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app. Reads only the `sessionId` and `cliSessionId` fields of the app's per-session records. |
-| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, "Needs you" first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
+| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
 | `title` | `"Agent Command Center"` | Displayed in the header and browser tab. |
@@ -304,9 +304,9 @@ small `custom-title` lines and skipping every other line undecoded, and only
 for files under `~/.claude/projects`. Without it, rows read "Session <id>".
 
 **The session view** (`/`, the default) shows one row per session, sorted by
-urgency: *Needs you* (a permission prompt or question, oldest first, with how
+urgency: *Blocked* (a permission prompt or question, oldest first, with how
 long it has waited), *Working* (what it is doing now, in plain words; a session
-silent for 10 minutes turns red as possibly stuck), *Your turn* (finished,
+silent for 10 minutes turns red as possibly stuck), *Ready for you* (finished,
 waiting for your next message), then *Idle* and *Closed today* folded away. Tap
 a row for a plain-language timeline. It is built for a phone first and reads
 the same event stream; the original page stays at `/classic`.
