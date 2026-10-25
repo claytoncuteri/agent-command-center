@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a1330">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Agent Command Center</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a1330;
+  --bg2: #0d1a40;
+  --glass: rgba(28,48,96,.72);
+  --glass2: rgba(20,36,78,.66);
+  --hair: rgba(150,195,255,.22);
+  --hair-strong: rgba(170,210,255,.38);
+  --text: #eef4ff;
+  --sub: #a9bddb;
+  --faint: #7d93b8;
+  --gold: #f0d38c;
+  --gold-soft: rgba(240,211,140,.16);
+  --blue: #6fd0ff;
+  --green: #63f0b6;
+  --green-soft: rgba(99,240,182,.14);
+  --red: #ff8080;
+  --red-soft: rgba(255,128,128,.14);
+  --grey: #8fa3c4;
+  --radius: 16px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { background: var(--bg); color: var(--text); }
+body {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 15px; line-height: 1.4;
+  min-height: 100vh;
+  padding: max(14px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) 60px max(16px, env(safe-area-inset-left));
+  background:
+    radial-gradient(900px 520px at 85% -10%, rgba(111,208,255,.22), transparent 62%),
+    radial-gradient(800px 520px at 5% 8%, rgba(130,115,255,.20), transparent 62%),
+    radial-gradient(1200px 700px at 50% 55%, rgba(40,90,200,.20), transparent 70%),
+    linear-gradient(180deg, var(--bg2), var(--bg) 55%, #081028);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+button { font: inherit; color: inherit; }
+.wrap { max-width: 880px; margin: 0 auto; }
+
+.top { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.mark {
+  width: 34px; height: 34px; border-radius: 10px; flex: none;
+  background: linear-gradient(135deg, #8fe3ff, #6b7dff 60%, #f0d38c);
+  box-shadow: 0 0 22px -4px rgba(111,208,255,.7);
+}
+.brand { min-width: 0; font-family: "Space Grotesk"; font-weight: 700; font-size: 19px; letter-spacing: .3px; }
+.brand small { display: block; font-family: "Inter"; font-weight: 500; font-size: 12px; color: var(--sub); letter-spacing: 0; }
+.live { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--green);
+  border: 1px solid rgba(99,240,182,.35); background: var(--green-soft); padding: 5px 10px; border-radius: 99px; }
+.live i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; animation: pulse 2.4s infinite; }
+.live.off { color: var(--red); border-color: rgba(255,128,128,.35); background: var(--red-soft); }
+.live.wait { color: var(--grey); border-color: var(--hair); background: rgba(20,36,78,.5); }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
+
+.summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 12px; }
+.sum {
+  text-align: left; border-radius: 14px; padding: 10px 12px; cursor: pointer;
+  background: linear-gradient(180deg, var(--glass), var(--glass2));
+  border: 1px solid var(--hair);
+  box-shadow: inset 0 1px 0 rgba(220,235,255,.12);
+}
+.sum b { display: block; font-family: "Space Grotesk"; font-size: 24px; line-height: 1.1; }
+.sum span { font-size: 12px; color: var(--sub); }
+.sum.need b { color: var(--gold); } .sum.need.hot { border-color: rgba(240,211,140,.55); box-shadow: inset 0 1px 0 rgba(255,240,200,.18), 0 0 22px -8px rgba(240,211,140,.6); }
+.sum.work b { color: var(--green); }
+.sum.turn b { color: var(--blue); }
+.sum.idle b { color: var(--grey); }
+.sum.on { outline: 2px solid var(--hair-strong); outline-offset: 1px; }
+
+.chips { display: flex; gap: 7px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 8px; scrollbar-width: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip { flex: none; font-size: 13px; color: var(--sub); padding: 6px 11px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--hair); background: rgba(20,36,78,.5); white-space: nowrap; }
+.chip.on { color: var(--text); border-color: var(--hair-strong); background: rgba(111,208,255,.16); }
+.chip em { font-style: normal; color: var(--gold); margin-left: 4px; }
+
+.sec { display: flex; align-items: baseline; gap: 8px; margin: 18px 2px 8px; }
+.sec h2 { font-family: "Space Grotesk"; font-size: 15px; font-weight: 600; letter-spacing: .4px; }
+.sec .n { font-size: 13px; color: var(--faint); }
+.sec .hint { margin-left: auto; font-size: 12px; color: var(--faint); text-align: right; }
+
+.list { display: flex; flex-direction: column; gap: 8px; }
+.calm { padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--hair); background: rgba(20,36,78,.45);
+  color: var(--sub); font-size: 14px; display: flex; align-items: center; gap: 10px; }
+.calm::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
+
+.row {
+  width: 100%; text-align: left;
+  display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: 4px 12px; align-items: center;
+  padding: 12px 14px; border-radius: var(--radius); cursor: pointer;
+  background: linear-gradient(180deg, var(--glass), var(--glass2));
+  border: 1px solid var(--hair);
+  box-shadow: inset 0 1px 0 rgba(220,235,255,.10), 0 10px 28px -20px rgba(0,8,40,.9);
+}
+.row:hover, .row:focus-visible { border-color: var(--hair-strong); outline: none; }
+.dot { width: 10px; height: 10px; border-radius: 50%; grid-row: 1 / span 2; align-self: start; margin-top: 6px; }
+.title { font-weight: 600; font-size: 15px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.when { font-size: 12px; color: var(--sub); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.line2 { grid-column: 2 / span 2; display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 13px; color: var(--sub); }
+.proj { flex: none; max-width: 48%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 11.5px; font-weight: 600; color: var(--text); padding: 2px 8px; border-radius: 6px;
+  background: rgba(150,195,255,.12); border: 1px solid var(--hair); }
+.doing { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.spark { grid-column: 2 / span 2; display: flex; gap: 2px; height: 6px; margin-top: 4px; }
+.spark i { flex: 1; border-radius: 2px; background: rgba(150,195,255,.12); }
+.spark i.w { background: rgba(99,240,182,.55); }
+.spark i.a { background: rgba(240,211,140,.75); }
+.spark i.t { background: rgba(111,208,255,.45); }
+
+.s-need .dot { background: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft), 0 0 12px var(--gold); }
+.s-error .dot { background: var(--red); box-shadow: 0 0 0 4px var(--red-soft), 0 0 12px var(--red); }
+.s-work .dot { background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 1.6s infinite; }
+.s-quiet .dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.s-turn .dot { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+.s-idle .dot, .s-closed .dot { background: transparent; border: 2px solid var(--grey); }
+.s-closed { opacity: .7; }
+
+.need-card {
+  border-color: rgba(240,211,140,.55);
+  background: linear-gradient(180deg, rgba(240,211,140,.10), var(--glass) 40%, var(--glass2));
+  box-shadow: inset 0 1px 0 rgba(255,240,200,.18), 0 0 30px -10px rgba(240,211,140,.55);
+}
+.need-card.s-error { border-color: rgba(255,128,128,.55); background: linear-gradient(180deg, rgba(255,128,128,.10), var(--glass) 40%, var(--glass2));
+  box-shadow: inset 0 1px 0 rgba(255,210,210,.16), 0 0 30px -10px rgba(255,128,128,.5); }
+.need-card .title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.need-card .when { align-self: start; margin-top: 2px; }
+.ask { grid-column: 2 / span 2; margin-top: 4px; font-size: 14px; color: var(--text); }
+.ask b { color: var(--gold); font-weight: 600; }
+.s-error .ask b { color: var(--red); }
+.quiet-note { grid-column: 2 / span 2; font-size: 12.5px; color: var(--red); margin-top: 2px; }
+
+.fold { width: 100%; margin-top: 8px; border-radius: var(--radius); border: 1px dashed var(--hair); padding: 11px 14px; background: transparent;
+  color: var(--sub); font-size: 14px; display: flex; justify-content: space-between; cursor: pointer; }
+.fold:hover { border-color: var(--hair-strong); }
+
+.foot { margin-top: 26px; text-align: center; font-size: 12px; color: var(--faint); }
+.foot a { color: var(--sub); }
+
+.sheet-bg { position: fixed; inset: 0; background: rgba(4,8,24,.6); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px);
+  display: none; align-items: flex-end; justify-content: center; z-index: 5; }
+.sheet-bg.on { display: flex; }
+.sheet { position: relative; width: 100%; max-width: 560px; max-height: 84vh; overflow-y: auto; overscroll-behavior: contain;
+  padding: 18px 18px calc(28px + env(safe-area-inset-bottom));
+  border-radius: 22px 22px 0 0; background: linear-gradient(180deg, #1b2f63, #12224c); border: 1px solid var(--hair-strong); }
+.sheet .x { position: absolute; top: 12px; right: 12px; width: 34px; height: 34px; border-radius: 10px; cursor: pointer;
+  border: 1px solid var(--hair); background: rgba(20,36,78,.6); font-size: 18px; line-height: 1; }
+.sheet h3 { font-family: "Space Grotesk"; font-size: 19px; padding-right: 42px; }
+.sheet .meta { color: var(--sub); font-size: 13px; margin: 4px 0 6px; }
+.sheet .now { font-size: 14px; margin: 8px 0 14px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--hair); background: rgba(10,19,48,.35); }
+.tl { list-style: none; border-left: 2px solid var(--hair); margin-left: 5px; }
+.tl li { position: relative; padding: 0 0 12px 16px; font-size: 14px; }
+.tl li::before { content: ""; position: absolute; left: -6px; top: 5px; width: 10px; height: 10px; border-radius: 50%; background: var(--blue); }
+.tl li.a::before { background: var(--gold); }
+.tl li.w::before { background: var(--green); }
+.tl li.x::before { background: var(--red); }
+.tl li.i::before { background: var(--grey); }
+.tl time { display: block; font-family: "JetBrains Mono"; font-size: 11.5px; color: var(--faint); }
+
+@media (min-width: 900px) {
+  .wrap { max-width: 1180px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 22px; align-items: start; }
+  .top, .summary, .chips, .foot { grid-column: 1 / -1; }
+  .col-left { grid-column: 1; } .col-right { grid-column: 2; }
+  .summary { max-width: 760px; }
+  .sheet-bg { align-items: center; } .sheet { border-radius: 22px; padding-bottom: 24px; }
+}
+@media (max-width: 380px) {
+  .summary { gap: 6px; } .sum { padding: 9px 9px; } .sum b { font-size: 21px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <header class="top">
+    <div class="mark" aria-hidden="true"></div>
+    <div class="brand"><span id="brandTitle">Agent Command Center</span><small id="brandSub">Connecting&hellip;</small></div>
+    <span class="live wait" id="live"><i></i><span id="liveLabel">Connecting</span></span>
+  </header>
+
+  <section class="summary" id="summary" aria-label="Sessions by state"></section>
+  <nav class="chips" id="chips" aria-label="Filter by project"></nav>
+
+  <div class="col-left">
+    <div class="sec"><h2>Needs you</h2><span class="n" id="nNeed"></span><span class="hint">oldest first</span></div>
+    <div class="list" id="listNeed"></div>
+    <div class="sec"><h2>Working</h2><span class="n" id="nWork"></span></div>
+    <div class="list" id="listWork"></div>
+  </div>
+
+  <div class="col-right">
+    <div class="sec"><h2>Your turn</h2><span class="n" id="nTurn"></span><span class="hint">finished, waiting for your next message</span></div>
+    <div class="list" id="listTurn"></div>
+    <div class="sec"><h2>Idle</h2><span class="n" id="nIdle"></span><span class="hint">no turn in over 6h</span></div>
+    <div class="list" id="listIdle"></div>
+    <div id="closedWrap"></div>
+  </div>
+
+  <footer class="foot" id="foot"></footer>
+</div>
+
+<div class="sheet-bg" id="sheetBg" role="dialog" aria-modal="true" aria-labelledby="sheetTitle">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<script src="/static/sessions.js"></script>
+<script>
+(function () {
+  'use strict';
+  var M = window.ACCSessions;
+  var EVENTS = [];
+  var MODEL = null;
+  var lastUpdate = null;
+  var openKey = null;
+  var ui = load({ project: null, state: null, idleOpen: false, closedOpen: false });
+
+  function load(defaults) {
+    try {
+      var raw = localStorage.getItem('acc.sessions.ui');
+      if (raw) { var v = JSON.parse(raw); for (var k in defaults) if (!(k in v)) v[k] = defaults[k]; return v; }
+    } catch (_) {}
+    return defaults;
+  }
+  function save() { try { localStorage.setItem('acc.sessions.ui', JSON.stringify(ui)); } catch (_) {} }
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function $(id) { return document.getElementById(id); }
+  function now() { return Date.now(); }
+
+  // The project shows as a chip on every row, so an untitled session is just
+  // "Session <id>" until the app gives it a name.
+  function titleOf(s) {
+    if (s.title) return s.title;
+    return s.session ? 'Session ' + s.session : s.project;
+  }
+  function bucket(s) { return s.state === 'error' ? 'need' : s.state === 'quiet' ? 'work' : s.state; }
+
+  function visible(s) {
+    if (ui.project && s.project !== ui.project) return false;
+    if (ui.state && bucket(s) !== ui.state) return false;
+    return true;
+  }
+
+  function rowHtml(s, t) {
+    var cls = 'row s-' + s.state + ((s.state === 'need' || s.state === 'error') ? ' need-card' : '');
+    var when;
+    if (s.state === 'need' || s.state === 'error') when = 'waiting ' + M.rel(t - s.since);
+    else if (s.state === 'quiet') when = M.rel(t - s.lastAt);
+    else when = M.rel(t - s.lastAt);
+    if (when === 'waiting now') when = 'just now';
+    var multiHost = MODEL && MODEL.hosts.length > 1;
+    var meta = [];
+    if (multiHost && s.host) meta.push(s.host);
+    var line = M.describe(s, t);
+    var h = '<button class="' + cls + '" data-key="' + esc(s.key) + '">' +
+      '<span class="dot" aria-hidden="true"></span>' +
+      '<span class="title">' + esc(titleOf(s)) + '</span>' +
+      '<span class="when">' + esc(when) + '</span>';
+    if (s.state === 'need' || s.state === 'error') {
+      h += '<span class="line2"><span class="proj">' + esc(s.project) + '</span>' +
+        (meta.length ? '<span class="doing">' + esc(meta.join(' · ')) + '</span>' : '') + '</span>';
+      var kind = s.state === 'error' ? 'Error' : (s.ask ? s.ask.kind : 'Waiting');
+      var text = s.state === 'error' ? s.note : (s.ask ? s.ask.text : 'for you');
+      h += '<span class="ask"><b>' + esc(kind) + ':</b> ' + esc(text) +
+        (s.openCount > 1 ? ' <span style="color:var(--sub)">(+' + (s.openCount - 1) + ' more)</span>' : '') + '</span>';
+    } else {
+      if (multiHost && s.host) line = s.host + ' · ' + line;
+      h += '<span class="line2"><span class="proj">' + esc(s.project) + '</span><span class="doing">' + esc(line) + '</span></span>';
+      if (s.state === 'quiet') {
+        h += '<span class="quiet-note">No activity for ' + esc(M.dur(t - s.lastAt)) + ' while working. It may be stuck.</span>';
+      }
+      if (s.state === 'work' || s.state === 'quiet') {
+        h += '<span class="spark" aria-hidden="true">' + s.bars.map(function (b) { return '<i class="' + b + '"></i>'; }).join('') + '</span>';
+      }
+    }
+    return h + '</button>';
+  }
+
+  function renderList(id, list, t, empty) {
+    var el = $(id);
+    if (!list.length) { el.innerHTML = empty || ''; return; }
+    el.innerHTML = list.map(function (s) { return rowHtml(s, t); }).join('');
+  }
+
+  function render() {
+    var t = now();
+    MODEL = M.deriveSessions(EVENTS, t);
+    var all = MODEL.sessions;
+    var c = MODEL.counts;
+
+    var active = all.filter(function (s) { return s.state !== 'closed'; });
+    $('brandSub').textContent = active.length + ' session' + (active.length === 1 ? '' : 's') +
+      (MODEL.hosts.length ? ' on ' + MODEL.hosts.length + ' machine' + (MODEL.hosts.length === 1 ? '' : 's') : '');
+
+    var tiles = [['need', 'Need you'], ['work', 'Working'], ['turn', 'Your turn'], ['idle', 'Idle']];
+    $('summary').innerHTML = tiles.map(function (p) {
+      var hot = p[0] === 'need' && c.need > 0 ? ' hot' : '';
+      return '<button class="sum ' + p[0] + hot + (ui.state === p[0] ? ' on' : '') + '" data-state="' + p[0] + '">' +
+        '<b>' + c[p[0]] + '</b><span>' + p[1] + '</span></button>';
+    }).join('');
+
+    var chips = '<button class="chip' + (ui.project ? '' : ' on') + '" data-project="">All</button>';
+    MODEL.projects.forEach(function (p) {
+      chips += '<button class="chip' + (ui.project === p.name ? ' on' : '') + '" data-project="' + esc(p.name) + '">' +
+        esc(p.name) + (p.need ? '<em>' + p.need + '</em>' : '') + '</button>';
+    });
+    $('chips').innerHTML = chips;
+
+    var shown = all.filter(visible);
+    var need = shown.filter(function (s) { return bucket(s) === 'need'; });
+    var work = shown.filter(function (s) { return bucket(s) === 'work'; });
+    var turn = shown.filter(function (s) { return s.state === 'turn'; });
+    var idle = shown.filter(function (s) { return s.state === 'idle'; });
+    var closed = shown.filter(function (s) { return s.state === 'closed'; });
+
+    $('nNeed').textContent = need.length || '';
+    $('nWork').textContent = work.length || '';
+    $('nTurn').textContent = turn.length || '';
+    $('nIdle').textContent = idle.length || '';
+
+    renderList('listNeed', need, t, '<div class="calm">Nothing needs you right now.</div>');
+    renderList('listWork', work, t, '<div class="calm" style="--x:0">No session is working.</div>');
+    renderList('listTurn', turn, t, '');
+    var IDLE_SHOW = 3;
+    var idleShown = ui.idleOpen ? idle : idle.slice(0, IDLE_SHOW);
+    renderList('listIdle', idleShown, t, '');
+    if (idle.length > IDLE_SHOW) {
+      $('listIdle').insertAdjacentHTML('beforeend',
+        '<button class="fold" data-fold="idle"><span>' + (ui.idleOpen ? 'Show fewer' : (idle.length - IDLE_SHOW) + ' more idle sessions') +
+        '</span><span>' + (ui.idleOpen ? 'Hide' : 'Show') + '</span></button>');
+    }
+    var cw = '';
+    if (closed.length) {
+      cw = '<button class="fold" data-fold="closed"><span>Closed today · ' + closed.length + '</span><span>' +
+        (ui.closedOpen ? 'Hide' : 'Show') + '</span></button>';
+      if (ui.closedOpen) cw += '<div class="list" style="margin-top:8px">' + closed.map(function (s) { return rowHtml(s, t); }).join('') + '</div>';
+    }
+    $('closedWrap').innerHTML = cw;
+
+    var ago = lastUpdate ? M.rel(t - lastUpdate) : null;
+    $('foot').innerHTML = 'Read-only. Answer decisions where your agents run.' +
+      (ago ? ' Updated ' + (ago === 'now' ? 'just now' : ago + ' ago') + '.' : '') +
+      ' &middot; <a href="/classic">Classic view</a>';
+
+    document.title = (c.need ? '(' + c.need + ') ' : '') + ($('brandTitle').textContent || 'Agent Command Center');
+    if (openKey) renderSheet();
+  }
+
+  function renderSheet() {
+    var s = MODEL && MODEL.sessions.filter(function (x) { return x.key === openKey; })[0];
+    if (!s) { closeSheet(); return; }
+    var t = now();
+    var head = [s.project];
+    if (s.host) head.push(s.host);
+    if (s.session) head.push('session ' + s.session);
+    if (s.openedAt) head.push('opened ' + M.rel(t - s.openedAt) + ' ago');
+    var nowLine = (s.state === 'need' || s.state === 'error') && (s.ask || s.note)
+      ? '<b style="color:var(--gold)">' + esc(s.state === 'error' ? 'Error' : s.ask.kind) + ':</b> ' + esc(s.state === 'error' ? s.note : s.ask.text)
+      : esc(M.describe(s, t));
+    var items = s.events.slice(0, 40).map(function (e) {
+      var d = new Date(e.ts);
+      var hhmm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+      var cls = e.status === 'awaiting_approval' ? 'a' : e.status === 'failed' ? 'x'
+        : (e.status === 'started' || e.status === 'approved') ? 'w' : e.status === 'idle' ? 'i' : '';
+      return '<li class="' + cls + '"><time>' + hhmm + ' · ' + esc(M.rel(t - Date.parse(e.ts))) + '</time>' + esc(M.eventLine(e)) + '</li>';
+    }).join('');
+    $('sheet').innerHTML =
+      '<button class="x" id="sheetClose" aria-label="Close">×</button>' +
+      '<h3 id="sheetTitle">' + esc(titleOf(s)) + '</h3>' +
+      '<div class="meta">' + esc(head.join(' · ')) + '</div>' +
+      '<div class="now">' + nowLine + '</div>' +
+      '<ul class="tl">' + items + '</ul>';
+  }
+
+  function openSheet(key) { openKey = key; renderSheet(); $('sheetBg').classList.add('on'); document.body.style.overflow = 'hidden'; }
+  function closeSheet() { openKey = null; $('sheetBg').classList.remove('on'); document.body.style.overflow = ''; }
+
+  document.addEventListener('click', function (ev) {
+    var el = ev.target.closest ? ev.target.closest('[data-key],[data-state],[data-project],[data-fold],#sheetClose') : null;
+    if (!el) { if (ev.target === $('sheetBg')) closeSheet(); return; }
+    if (el.id === 'sheetClose') { closeSheet(); return; }
+    if (el.hasAttribute('data-key')) { openSheet(el.getAttribute('data-key')); return; }
+    if (el.hasAttribute('data-state')) { var st = el.getAttribute('data-state'); ui.state = ui.state === st ? null : st; }
+    else if (el.hasAttribute('data-project')) { ui.project = el.getAttribute('data-project') || null; }
+    else if (el.getAttribute('data-fold') === 'idle') { ui.idleOpen = !ui.idleOpen; }
+    else if (el.getAttribute('data-fold') === 'closed') { ui.closedOpen = !ui.closedOpen; }
+    save(); render();
+  });
+  document.addEventListener('keydown', function (ev) { if (ev.key === 'Escape' && openKey) closeSheet(); });
+
+  function setLive(state) {
+    var el = $('live');
+    el.className = 'live' + (state === 'on' ? '' : state === 'off' ? ' off' : ' wait');
+    $('liveLabel').textContent = state === 'on' ? 'Live' : state === 'off' ? 'Offline' : 'Connecting';
+  }
+
+  function connect() {
+    var es = new EventSource('/api/stream');
+    es.onopen = function () { setLive('on'); };
+    es.onmessage = function (m) {
+      try { EVENTS = JSON.parse(m.data) || []; } catch (_) { return; }
+      lastUpdate = now(); setLive('on'); render();
+    };
+    es.onerror = function () { setLive('off'); };
+  }
+
+  fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
+    if (cfg && cfg.title) $('brandTitle').textContent = cfg.title;
+    render();
+  }).catch(function () {});
+  fetch('/api/events').then(function (r) { return r.json(); }).then(function (evs) {
+    EVENTS = evs || []; lastUpdate = now(); render();
+  }).catch(function () { setLive('off'); });
+  connect();
+  setInterval(render, 15000);
+})();
+</script>
+</body>
+</html>

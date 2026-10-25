@@ -208,9 +208,72 @@ class TestApprovals(HookCase):
         self.assertEqual(evs[1]["status"], "approved")
         self.assertEqual(evs[1]["result"], "answered")
 
-    def test_pre_tool_use_other_tools_ignored(self):
+    def test_pre_tool_use_records_doing_only_on_change(self):
+        self.run_hook("PreToolUse", tool_name="Edit", tool_input={"file_path": SENTINEL})
+        self.run_hook("PreToolUse", tool_name="Write")  # same activity: no new event
         evs = self.run_hook("PreToolUse", tool_name="Bash", tool_input={"command": SENTINEL})
-        self.assertEqual(evs, [])
+        self.assertEqual([e.get("doing") for e in evs], ["Editing files", "Running a command"])
+        self.assertTrue(all(e["status"] == "started" and e["action"] == "Working" for e in evs))
+        self.assertNotIn(SENTINEL, self.raw())
+
+    def test_doing_resets_each_turn(self):
+        self.run_hook("UserPromptSubmit")
+        self.run_hook("PreToolUse", tool_name="Read")
+        self.run_hook("Stop")
+        self.run_hook("UserPromptSubmit")
+        evs = self.run_hook("PreToolUse", tool_name="Read")
+        self.assertEqual(evs[-1].get("doing"), "Reading files", "a new turn reports Reading again")
+        self.assertEqual(evs[0].get("doing"), "Thinking")
+
+
+class TestPlainLanguage(HookCase):
+    def test_doing_labels(self):
+        cases = {
+            "Edit": "Editing files", "Grep": "Searching the code", "Bash": "Running a command",
+            "WebSearch": "Browsing the web", "Task": "Running a sub-agent", "Read": "Reading files",
+            "mcp__claude-in-chrome__navigate": "Using the browser",
+            "mcp__1a59c906-04da-521d-bda7-7f71b9f9e01c__batch": "Using a connector",
+            "mcp__github__create_pr": "Using github",
+            "mcp__ccd_turn__update_plan": "Updating its task list",
+            "mcp__ccd_session__start_session": "Managing sessions",
+            "mcp__ccd_view__show_pane": "Using the app",
+            "Artifact": "Publishing a page",
+            "SomethingNew": "Using SomethingNew",
+            "": "Working",
+        }
+        for tool, label in cases.items():
+            self.assertEqual(hook.doing_label(tool), label, tool)
+
+    def test_resolution_actions_never_repeat_the_ask(self):
+        self.run_hook("PermissionRequest", tool_name="Bash")
+        self.run_hook("PostToolUse", tool_name="Bash")
+        self.run_hook("PermissionRequest", tool_name="Edit")
+        self.run_hook("PermissionDenied", tool_name="Edit")
+        self.run_hook("PreToolUse", tool_name="AskUserQuestion")
+        self.run_hook("PostToolUse", tool_name="AskUserQuestion")
+        self.run_hook("PermissionRequest", tool_name="Bash")
+        evs = self.run_hook("Stop")
+        resolved = [e["action"] for e in evs if e["status"] in ("approved", "declined")]
+        self.assertEqual(
+            resolved, ["Permission granted", "Permission denied", "Question answered", "Prompt dismissed"]
+        )
+
+    def test_interrupt_label(self):
+        self.run_hook("PermissionRequest", tool_name="Bash")
+        evs = self.run_hook("PostToolUseFailure", tool_name="Bash", is_interrupt=True)
+        self.assertEqual(evs[-1]["action"], "Interrupted")
+
+    def test_session_title_captured_and_cleaned(self):
+        evs = self.run_hook("SessionStart", source="startup", session_title="  Website:\n Build  page ")
+        self.assertEqual(evs[0]["title"], "Website: Build page")
+        evs = self.run_hook("SessionStart", source="resume", session_title="X" * 300)
+        self.assertEqual(len(evs[-1]["title"]), hook.TITLE_MAX)
+
+    def test_no_title_field_when_absent(self):
+        evs = self.run_hook("SessionStart", source="startup")
+        self.assertNotIn("title", evs[0])
+        evs = self.run_hook("SessionStart", source="startup", session_title=123)
+        self.assertNotIn("title", evs[-1])
 
     def test_sessions_are_independent(self):
         self.run_hook("PermissionRequest", tool_name="Bash", session_id="aaaaaaaa-1")
@@ -255,6 +318,87 @@ class TestPrivacy(HookCase):
         self.assertEqual(os.stat(self.event_file).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(os.path.dirname(self.event_file)).st_mode & 0o777 & 0o077, 0,
                          "event directory must not be group/world accessible")
+
+
+class TestTitlesFromTranscript(HookCase):
+    """The opt-in title reader: only custom-title lines, only under ~/.claude/projects."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = os.path.join(self.tmp.name, "home")
+        self.proj = os.path.join(self.home, ".claude", "projects", "-p")
+        os.makedirs(self.proj)
+        self.home_patch = mock.patch.dict(os.environ, {"HOME": self.home})
+        self.home_patch.start()
+
+    def tearDown(self):
+        self.home_patch.stop()
+        super().tearDown()
+
+    def transcript(self, lines, name="s.jsonl", where=None):
+        path = os.path.join(where or self.proj, name)
+        with open(path, "w", encoding="utf-8") as f:
+            for rec in lines:
+                f.write((rec if isinstance(rec, str) else json.dumps(rec)) + "\n")
+        return path
+
+    def poison_lines(self):
+        return [
+            {"type": "user", "message": {"content": SENTINEL}},
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": SENTINEL}]}},
+        ]
+
+    def test_off_by_default(self):
+        path = self.transcript([{"type": "custom-title", "customTitle": "Hidden", "sessionId": "x"}])
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertNotIn("title", evs[-1])
+
+    def test_latest_title_on_stop_and_start(self):
+        os.environ["ACC_READ_TITLES"] = "1"
+        path = self.transcript(self.poison_lines() + [
+            {"type": "custom-title", "customTitle": "First name", "sessionId": "x"},
+            {"type": "user", "message": {"content": SENTINEL}},
+            {"type": "custom-title", "customTitle": "Website: Build the /contact page", "sessionId": "x"},
+        ])
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertEqual(evs[-1]["title"], "Website: Build the /contact page")
+        evs = self.run_hook("SessionStart", source="resume", transcript_path=path)
+        self.assertEqual(evs[-1]["title"], "Website: Build the /contact page")
+        self.assertNotIn(SENTINEL, self.raw())
+
+    def test_title_found_before_the_tail_window(self):
+        os.environ["ACC_READ_TITLES"] = "1"
+        filler = [{"type": "assistant", "message": {"content": "x" * 2000}}] * 400  # about 800 KB
+        path = self.transcript([{"type": "custom-title", "customTitle": "Early title", "sessionId": "x"}] + filler)
+        self.assertGreater(os.path.getsize(path), hook._TITLE_TAIL_BYTES)
+        self.assertEqual(hook.title_from_transcript(path), "Early title")
+
+    def test_refuses_files_outside_claude_projects(self):
+        os.environ["ACC_READ_TITLES"] = "1"
+        outside = self.transcript(
+            [{"type": "custom-title", "customTitle": "Nope", "sessionId": "x"}], where=self.tmp.name
+        )
+        self.assertIsNone(hook.title_from_transcript(outside))
+        sneaky = os.path.join(self.proj, "..", "..", "..", os.path.basename(outside))
+        self.assertIsNone(hook.title_from_transcript(sneaky))
+        not_jsonl = self.transcript([{"type": "custom-title", "customTitle": "Nope"}], name="s.txt")
+        self.assertIsNone(hook.title_from_transcript(not_jsonl))
+
+    def test_quoted_title_text_inside_a_message_is_ignored(self):
+        os.environ["ACC_READ_TITLES"] = "1"
+        quoted = {"type": "user", "message": {"content": '{"type":"custom-title","customTitle":"' + SENTINEL + '"}'}}
+        path = self.transcript([quoted], name="q.jsonl")
+        with open(path, "rb") as f:
+            self.assertFalse(any(m in f.read() for m in hook._TITLE_MARKS))
+        self.assertIsNone(hook.title_from_transcript(path))
+
+    def test_missing_file_and_garbage_lines(self):
+        os.environ["ACC_READ_TITLES"] = "1"
+        self.assertIsNone(hook.title_from_transcript(os.path.join(self.proj, "missing.jsonl")))
+        path = self.transcript(['{"type":"custom-title", broken', "not json at all"])
+        self.assertIsNone(hook.title_from_transcript(path))
+        evs = self.run_hook("Stop", transcript_path=path)
+        self.assertNotIn("title", evs[-1])
 
 
 class TestAgentName(unittest.TestCase):

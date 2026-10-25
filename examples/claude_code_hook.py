@@ -12,10 +12,17 @@ prompt or question waiting on you shows up in the approvals panel.
 Privacy, by construction
 ------------------------
 The script reads only these stdin fields: hook_event_name, session_id, cwd,
-source, tool_name, is_interrupt, notification_type. It never reads the prompt,
-tool inputs, tool results, the assistant's message, the transcript, or the
-free text of a notification. The `detail` field is always a fixed template
-("permission: Bash"). Lines are capped well under 4 KB and written with a
+source, session_title, tool_name, is_interrupt, notification_type. It never
+reads the prompt, tool inputs, tool results, the assistant's message, the
+transcript, or the free text of a notification. The `detail` field is always a
+fixed template ("permission: Bash"), and `doing` is a fixed phrase chosen from
+the tool name alone ("Editing files", "Running a command"). `title` is the
+session's own title as the app shows it, when available.
+
+One opt-in exception, off by default: with ACC_READ_TITLES=1 the script reads
+the session's title from its history file (transcript_path), parsing only the
+small `custom-title` lines and skipping every other line undecoded. See
+title_from_transcript(). Lines are capped well under 4 KB and written with a
 single O_APPEND write, so lines from parallel sessions never interleave.
 
 It prints nothing (hook stdout can be injected into the model's context) and
@@ -28,8 +35,8 @@ Install (pinned copy, not the working tree)
     shasum -a 256 ~/.claude/hooks/acc_claude_code_hook.py   # record it
 
 Then register it in ~/.claude/settings.json (see README, "Claude Code
-sessions"). Use `"async": true` on PostToolUse and PostToolUseFailure, which
-fire on every tool call.
+sessions"). Use `"async": true` on PreToolUse, PostToolUse and
+PostToolUseFailure, which fire on every tool call.
 
 Configuration (environment)
 ---------------------------
@@ -39,22 +46,27 @@ Configuration (environment)
                      (default <event file dir>/state)
     ACC_HOST         override the host label (default: short hostname)
     ACC_HOOK_DEBUG   set to 1 to log exceptions to <event file dir>/hook.log
+    ACC_READ_TITLES  set to 1 to take session titles from the history file's
+                     `custom-title` lines (opt-in; off by default)
 
 Event mapping
 -------------
-    SessionStart            idle              "Session opened" / "Session resumed"
-    UserPromptSubmit        started           "Working"
+    SessionStart            idle              "Session opened" / "Session resumed" (+ title)
+    UserPromptSubmit        started           "Working", doing "Thinking"
     PermissionRequest       awaiting_approval "Needs permission"  detail "permission: <tool>"
     Notification            awaiting_approval (permission_prompt only, as a fallback)
-    PreToolUse              awaiting_approval "Question for you" (AskUserQuestion only)
+    PreToolUse              awaiting_approval "Question for you" (AskUserQuestion), else
+                            started "Working" with `doing`, only when the activity changes
     PostToolUse             approved          when it matches the open approval's tool
     PostToolUseFailure      approved, or declined "interrupted" when is_interrupt
     PermissionDenied        declined          when it matches
     Stop                    finished          "Your turn"
     SessionEnd              idle              "Session closed"
 
-An approval still open at UserPromptSubmit, Stop or SessionEnd is closed as
-declined with result "not run" (an interrupted prompt never fires Stop).
+Resolve events carry their own action ("Permission granted", "Permission
+denied", "Question answered", "Prompt dismissed", "Interrupted"). An approval
+still open at UserPromptSubmit, Stop or SessionEnd is closed as declined with
+result "not run" (an interrupted prompt never fires Stop).
 """
 from __future__ import annotations
 
@@ -70,6 +82,7 @@ from typing import Any, Dict, Optional
 SCHEMA = "acc/1"
 MAX_LINE_BYTES = 3500
 DETAIL_MAX = 64
+TITLE_MAX = 100
 QUESTION_TOOL = "AskUserQuestion"
 
 _SAFE_ID = re.compile(r"[^A-Za-z0-9_-]")
@@ -190,6 +203,8 @@ def make_event(
     approval_id: Optional[str] = None,
     detail: Optional[str] = None,
     result: Optional[str] = None,
+    title: Optional[str] = None,
+    doing: Optional[str] = None,
 ) -> Dict[str, Any]:
     ev: Dict[str, Any] = {
         "schema": SCHEMA,
@@ -209,7 +224,119 @@ def make_event(
         ev["detail"] = detail[:DETAIL_MAX]
     if result:
         ev["result"] = result[:DETAIL_MAX]
+    if title:
+        ev["title"] = title[:TITLE_MAX]
+    if doing:
+        ev["doing"] = doing[:DETAIL_MAX]
     return ev
+
+
+# ── Plain-language labels ───────────────────────────────────────────────────────
+
+_DOING = {
+    "Edit": "Editing files",
+    "MultiEdit": "Editing files",
+    "Write": "Editing files",
+    "NotebookEdit": "Editing files",
+    "Read": "Reading files",
+    "Grep": "Searching the code",
+    "Glob": "Searching the code",
+    "LS": "Searching the code",
+    "Bash": "Running a command",
+    "BashOutput": "Checking a command",
+    "KillShell": "Checking a command",
+    "WebFetch": "Browsing the web",
+    "WebSearch": "Browsing the web",
+    "Task": "Running a sub-agent",
+    "Agent": "Running a sub-agent",
+    "TodoWrite": "Planning",
+    "ExitPlanMode": "Planning",
+    "EnterPlanMode": "Planning",
+    "Skill": "Using a skill",
+    "ToolSearch": "Loading tools",
+    "Artifact": "Publishing a page",
+    "SendUserFile": "Sending you a file",
+    "SendMessage": "Messaging another session",
+}
+# The Claude desktop app's own tools ("mcp__ccd_<area>__<tool>").
+_APP_DOING = {
+    "ccd_turn": "Updating its task list",
+    "ccd_session": "Managing sessions",
+    "ccd_session_mgmt": "Managing sessions",
+    "ccd_pr": "Checking the pull request",
+    "ccd_sidebar": "Organizing the sidebar",
+}
+_HEXISH = re.compile(r"^[0-9a-f-]{16,}$")
+
+
+def doing_label(tool_name: str) -> str:
+    """What a session is doing, in plain words, from the tool name alone."""
+    if tool_name in _DOING:
+        return _DOING[tool_name]
+    if tool_name.startswith("mcp__"):
+        server = tool_name.split("__")[1] if tool_name.count("__") >= 2 else ""
+        low = server.lower()
+        if "browser" in low or "chrome" in low:
+            return "Using the browser"
+        if low.startswith("ccd_"):
+            return _APP_DOING.get(low, "Using the app")
+        if not server or _HEXISH.match(low):
+            return "Using a connector"
+        return "Using {}".format(server.replace("_", " ").strip()[:30])
+    return "Using {}".format(tool_name[:30]) if tool_name else "Working"
+
+
+def clean_title(value: Any) -> Optional[str]:
+    """A session title as shown in the app, on one line; None when absent."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value.split())
+    return text[:TITLE_MAX] or None
+
+
+# A record's own "type" key, compact or spaced. Text quoted inside a message is
+# JSON-escaped (\"type\":\"...\"), so it never matches these byte patterns.
+_TITLE_MARKS = (b'"type":"custom-title"', b'"type": "custom-title"')
+_TITLE_TAIL_BYTES = 512 * 1024
+
+
+def title_from_transcript(path: Any) -> Optional[str]:
+    """
+    Opt-in (ACC_READ_TITLES=1): the session's title as the app shows it.
+
+    Claude Code does not pass the title to hooks, but the session's own
+    history file records each title as a small `custom-title` line. Only those
+    lines are parsed; every other line is skipped unread, so no prompt, reply
+    or tool content is ever decoded. Reads the last 512 KB first (titles are
+    re-recorded as the session goes) and the whole file only if needed. Only
+    files under ~/.claude/projects are opened.
+    """
+    if os.environ.get("ACC_READ_TITLES") != "1" or not isinstance(path, str) or not path:
+        return None
+    try:
+        real = os.path.realpath(os.path.expanduser(path))
+        allowed = os.path.realpath(os.path.join(os.path.expanduser("~"), ".claude", "projects"))
+        if not real.startswith(allowed + os.sep) or not real.endswith(".jsonl"):
+            return None
+        size = os.path.getsize(real)
+        with open(real, "rb") as f:
+            for start in ((max(0, size - _TITLE_TAIL_BYTES), 0) if size > _TITLE_TAIL_BYTES else (0,)):
+                f.seek(start)
+                found = None
+                for line in f:
+                    if not any(mark in line for mark in _TITLE_MARKS):
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(rec, dict) and rec.get("type") == "custom-title":
+                        found = clean_title(rec.get("customTitle")) or found
+                if found:
+                    return found
+    except OSError:
+        return None
+    return None
 
 
 # ── Approval lifecycle ──────────────────────────────────────────────────────────
@@ -221,6 +348,18 @@ def _new_approval_id(session_id: str) -> str:
 
 def _action_for(kind: str) -> str:
     return "Question for you" if kind == "question" else "Needs permission"
+
+
+def _resolution_action(kind: str, status: str, result: Optional[str]) -> str:
+    """The resolve event's label, so a card never repeats a stale ask."""
+    question = kind == "question"
+    if status == "approved":
+        return "Question answered" if question else "Permission granted"
+    if result == "interrupted":
+        return "Interrupted"
+    if result in ("not run", "superseded"):
+        return "Question skipped" if question else "Prompt dismissed"
+    return "Question skipped" if question else "Permission denied"
 
 
 def open_approval(
@@ -277,7 +416,7 @@ def close_approval(
         make_event(
             agent=agent,
             session_id=session_id,
-            action=_action_for(current.get("kind", "permission")),
+            action=_resolution_action(current.get("kind", "permission"), status, result),
             status=status,
             approval_id=current.get("approval_id"),
             result=result,
@@ -306,17 +445,27 @@ def handle(data: Dict[str, Any]) -> None:
     def emit(action: str, status: str, **kw: Any) -> None:
         append_event(make_event(agent=agent, session_id=session_id, action=action, status=status, **kw))
 
+    def set_doing(label: Optional[str]) -> None:
+        if label:
+            state["doing"] = label
+        else:
+            state.pop("doing", None)
+        save_state(session_id, state)
+
     if event == "SessionStart":
         source = data.get("source")
+        title = clean_title(data.get("session_title")) or title_from_transcript(data.get("transcript_path"))
         if source in ("resume", "compact"):
-            emit("Session resumed", "idle")
+            emit("Session resumed", "idle", title=title)
         else:
             clear_state(session_id)
-            emit("Session opened", "idle")
+            state = {}
+            emit("Session opened", "idle", title=title)
 
     elif event == "UserPromptSubmit":
         close_approval(agent, session_id, state, status="declined", result="not run")
-        emit("Working", "started")
+        emit("Working", "started", doing="Thinking")
+        set_doing("Thinking")
 
     elif event == "PermissionRequest":
         kind = "question" if tool_name == QUESTION_TOOL else "permission"
@@ -325,6 +474,12 @@ def handle(data: Dict[str, Any]) -> None:
     elif event == "PreToolUse":
         if tool_name == QUESTION_TOOL:
             open_approval(agent, session_id, state, tool_name=tool_name, kind="question")
+        else:
+            # Only when the activity changes, so a run of edits is one event.
+            label = doing_label(tool_name)
+            if label != state.get("doing"):
+                emit("Working", "started", doing=label)
+                set_doing(label)
 
     elif event == "Notification":
         if data.get("notification_type") == "permission_prompt" and not state.get("open"):
@@ -354,7 +509,9 @@ def handle(data: Dict[str, Any]) -> None:
 
     elif event == "Stop":
         close_approval(agent, session_id, state, status="declined", result="not run")
-        emit("Your turn", "finished")
+        # The app names a session after its first turn and on every rename.
+        emit("Your turn", "finished", title=title_from_transcript(data.get("transcript_path")))
+        set_doing(None)
 
     elif event == "SessionEnd":
         close_approval(agent, session_id, state, status="declined", result="not run")

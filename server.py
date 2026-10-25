@@ -52,7 +52,13 @@ _DEFAULTS: dict = {
     # Where Revise+Submit decisions are logged (separate from the event stream).
     "corrections_file": "./corrections.jsonl",
     "telegram": None,
+    # Which page "/" serves: "sessions" (one row per session, needs-you first)
+    # or "classic" (agent cards and the approvals workflow). Both stay reachable
+    # at /sessions and /classic.
+    "view": "sessions",
 }
+
+_VIEWS = {"sessions": "sessions.html", "classic": "index.html"}
 
 _ACTION_MODES = {"readonly", "browser", "telegram", "both"}
 # Modes in which the in-browser write-back endpoint is live.
@@ -89,6 +95,12 @@ def load_config() -> dict:
         if mode is not None:
             print(f"[acc] Warning: unknown actions_mode {mode!r} — falling back to 'readonly'.")
         cfg["actions_mode"] = "readonly"
+    # Validate the default view.
+    view = cfg.get("view")
+    if view not in _VIEWS:
+        if view is not None:
+            print(f"[acc] Warning: unknown view {view!r}, falling back to 'sessions'.")
+        cfg["view"] = "sessions"
     # Validate content mode, fall back to the simple default.
     cmode = cfg.get("content_mode")
     if cmode not in _CONTENT_MODES:
@@ -586,13 +598,20 @@ async def api_stream(request: Request) -> StreamingResponse:
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
+def page_for(path: str) -> str:
+    """The static page a browser path maps to: /classic, /sessions, else the default view."""
+    first = path.strip("/").split("/", 1)[0]
+    if first in _VIEWS:
+        return _VIEWS[first]
+    return _VIEWS.get(CONFIG.get("view", "sessions"), "sessions.html")
+
+
 @app.get("/{full_path:path}")
 def spa_fallback(full_path: str) -> FileResponse:
-    index = STATIC_DIR / "index.html"
-    if index.exists():
-        return FileResponse(str(index))
-    from fastapi import HTTPException
-    raise HTTPException(status_code=404, detail="index.html not found in static/")
+    page = STATIC_DIR / page_for(full_path)
+    if page.exists():
+        return FileResponse(str(page))
+    raise HTTPException(status_code=404, detail=f"{page.name} not found in static/")
 
 
 # ── Optional Telegram relay ────────────────────────────────────────────────────
