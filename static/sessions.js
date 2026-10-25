@@ -75,8 +75,11 @@
     return { kind: 'Approval', text: (e.action || 'Waiting') + (detail ? ' · ' + detail : '') };
   }
 
+  // A new turn: the prompt-submit event ("Thinking"; older streams sent none).
+  // A step-progress update is never one, even when it carries no activity.
   function isTurnStart(e) {
-    return e.status === 'started' && e.action === 'Working' && (!e.doing || e.doing === 'Thinking');
+    return e.status === 'started' && e.action === 'Working' && (!e.doing || e.doing === 'Thinking') &&
+      typeof e.steps_total !== 'number';
   }
 
   // opts.bootedAt (ms): when the machine running the sessions last started, if known.
@@ -99,7 +102,7 @@
         key: k, project: null, title: null, host: null, session: null, source: null,
         state: null, since: null, ask: null, doing: null, note: null,
         turnStartedAt: null, lastTurnMs: null, lastAt: null, openedAt: null,
-        lastAction: null, lastStatus: null, bars: [], events: []
+        lastAction: null, lastStatus: null, bars: [], events: [], steps: null
       };
       var open = {};      // approval_id -> {e, t}
       var lastState = null;
@@ -113,6 +116,12 @@
         if (e.title) s.title = e.title;
         s.lastAt = t;
         if (e.action === 'Session opened' && s.openedAt === null) s.openedAt = t;
+        // Step progress from the session's task list (counts only).
+        if (typeof e.steps_total === 'number' && e.steps_total > 0) {
+          s.steps = { done: Math.max(0, Math.min(e.steps_total, e.steps_done | 0)), total: e.steps_total,
+                      current: typeof e.steps_current === 'number' ? e.steps_current : null };
+        }
+        if (e.action === 'Session opened') s.steps = null;
 
         // A Claude Code ask cannot outlive its turn: the hook closes any open ask
         // when a turn ends or a new one starts. So a turn boundary clears asks a
@@ -241,6 +250,13 @@
     return h + 'h' + (m ? ' ' + m + 'm' : '');
   }
 
+  // "Step 3 of 6 · " while a task list is in progress; "" otherwise.
+  function stepLabel(s) {
+    if (!s.steps) return '';
+    if (s.steps.done >= s.steps.total) return 'All ' + s.steps.total + ' steps done · ';
+    return 'Step ' + (s.steps.current || s.steps.done + 1) + ' of ' + s.steps.total + ' · ';
+  }
+
   // The one-line "what is going on" for a row.
   function describe(s, now) {
     now = typeof now === 'number' ? now : Date.now();
@@ -248,11 +264,13 @@
       case 'need': return s.ask ? s.ask.kind + ': ' + s.ask.text : 'Waiting for you';
       case 'error': return 'Error: ' + (s.note || 'failed');
       case 'work':
-        return (s.doing || 'Working') + (s.turnStartedAt !== null ? ' · turn running ' + dur(now - s.turnStartedAt) : '');
-      case 'quiet': return (s.doing || 'Working') + ' · silent ' + dur(now - s.lastAt);
+        return stepLabel(s) + (s.doing || 'Working') +
+          (s.turnStartedAt !== null ? ' · turn running ' + dur(now - s.turnStartedAt) : '');
+      case 'quiet': return stepLabel(s) + (s.doing || 'Working') + ' · silent ' + dur(now - s.lastAt);
       case 'turn':
         if (s.fresh) return 'Opened, waiting for your first message';
-        return s.lastTurnMs !== null ? 'Finished a turn after ' + dur(s.lastTurnMs) : 'Finished a turn';
+        return (s.lastTurnMs !== null ? 'Finished a turn after ' + dur(s.lastTurnMs) : 'Finished a turn') +
+          (s.steps && s.steps.done < s.steps.total ? ' · ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '');
       case 'idle':
         if (s.interrupted) {
           return (s.interruptedFrom === 'need' ? 'Was waiting on you' : 'Was working') +
@@ -280,7 +298,7 @@
 
   return {
     deriveSessions: deriveSessions, describe: describe, eventLine: eventLine,
-    rel: rel, dur: dur, toolAsk: toolAsk,
+    rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel,
     QUIET_AFTER: QUIET_AFTER, IDLE_AFTER: IDLE_AFTER
   };
 }));

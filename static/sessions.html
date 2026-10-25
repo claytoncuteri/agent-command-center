@@ -162,6 +162,10 @@ button { font: inherit; color: inherit; }
 .spark i.w { background: rgba(99,240,182,.55); }
 .spark i.a { background: rgba(240,211,140,.75); }
 .spark i.t { background: rgba(111,208,255,.45); }
+.steps { grid-column: 2 / span 2; display: flex; gap: 3px; height: 7px; margin-top: 5px; }
+.steps i { flex: 1; border-radius: 3px; background: rgba(150,195,255,.14); }
+.steps i.d { background: rgba(99,240,182,.75); }
+.steps i.c { background: rgba(99,240,182,.35); box-shadow: 0 0 0 1px rgba(99,240,182,.7) inset; animation: pulse 1.6s infinite; }
 
 .s-need .dot { background: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft), 0 0 12px var(--gold); }
 .s-error .dot { background: var(--red); box-shadow: 0 0 0 4px var(--red-soft), 0 0 12px var(--red); }
@@ -354,7 +358,14 @@ button { font: inherit; color: inherit; }
       if (s.state === 'quiet') {
         h += '<span class="quiet-note">No activity for ' + esc(M.dur(t - s.lastAt)) + ' while working. It may be stuck.</span>';
       }
-      if (s.state === 'work' || s.state === 'quiet') {
+      if ((s.state === 'work' || s.state === 'quiet') && s.steps && s.steps.total <= 20) {
+        // Step progress: one segment per step, done, current and still to do.
+        var segs = [];
+        for (var i = 1; i <= s.steps.total; i++) {
+          segs.push('<i class="' + (i <= s.steps.done ? 'd' : i === (s.steps.current || s.steps.done + 1) ? 'c' : '') + '"></i>');
+        }
+        h += '<span class="steps" title="' + esc(s.steps.done + ' of ' + s.steps.total + ' steps done') + '">' + segs.join('') + '</span>';
+      } else if (s.state === 'work' || s.state === 'quiet') {
         h += '<span class="spark" aria-hidden="true">' + s.bars.map(function (b) { return '<i class="' + b + '"></i>'; }).join('') + '</span>';
       }
     }

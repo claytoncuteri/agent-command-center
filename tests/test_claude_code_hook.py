@@ -294,6 +294,66 @@ class TestPlainLanguage(HookCase):
         self.assertEqual(len(evs), 1, "session B must not close session A's approval")
 
 
+PLAN = "mcp__ccd_turn__update_plan"
+
+
+class TestStepProgress(HookCase):
+    """Counts from task lists, never their text."""
+
+    def items(self, *statuses):
+        return {"items": [{"content": SENTINEL + str(i), "status": s} for i, s in enumerate(statuses)], "scope": "x"}
+
+    def steps(self, evs):
+        return [(e["steps_done"], e["steps_total"], e.get("steps_current")) for e in evs if "steps_total" in e]
+
+    def test_app_plan_items_advance_and_wrap_up(self):
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.items("in_progress", "pending", "pending"))
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"advance": True})
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"advance": True})
+        evs = self.run_hook("PostToolUse", tool_name="mcp__ccd_turn__wrap_up", tool_input={"recap": SENTINEL})
+        self.assertEqual(self.steps(evs), [(0, 3, 1), (1, 3, 2), (2, 3, 3), (3, 3, None)])
+        self.assertNotIn(SENTINEL, self.raw())
+
+    def test_app_plan_done_and_start(self):
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.items("in_progress", "pending", "pending", "pending"))
+        evs = self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"done": [1, 2], "start": 4})
+        self.assertEqual(self.steps(evs)[-1], (2, 4, 4))
+
+    def test_terminal_todowrite(self):
+        todos = {"todos": [{"content": SENTINEL, "activeForm": SENTINEL, "status": s}
+                           for s in ("completed", "completed", "in_progress", "pending")]}
+        evs = self.run_hook("PostToolUse", tool_name="TodoWrite", tool_input=todos)
+        self.assertEqual(self.steps(evs), [(2, 4, 3)])
+        self.assertNotIn(SENTINEL, self.raw())
+
+    def test_no_event_when_nothing_changed(self):
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.items("in_progress", "pending"))
+        evs = self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.items("in_progress", "pending"))
+        self.assertEqual(len(self.steps(evs)), 1)
+
+    def test_progress_without_a_list_is_ignored(self):
+        evs = self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"advance": True})
+        evs = self.run_hook("PostToolUse", tool_name="mcp__ccd_turn__wrap_up", tool_input={})
+        self.assertEqual(self.steps(evs), [])
+
+    def test_other_tools_and_bad_inputs_ignored(self):
+        self.run_hook("PostToolUse", tool_name="Bash", tool_input={"items": [{"status": "completed"}]})
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"items": "not a list"})
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=None)
+        self.run_hook("PostToolUse", tool_name="mcp__other__update_plan", tool_input=self.items("pending"))
+        self.assertEqual(self.steps(self.events()), [])
+
+    def test_unknown_statuses_count_as_pending_and_list_is_capped(self):
+        evs = self.run_hook("PostToolUse", tool_name=PLAN,
+                            tool_input={"items": [{"status": "weird"}] * 80})
+        self.assertEqual(self.steps(evs), [(0, hook._MAX_STEPS, 1)])
+
+    def test_unit_helpers(self):
+        self.assertEqual(hook.current_step(["completed", "completed"]), None)
+        self.assertEqual(hook.current_step(["completed", "pending"]), 2)
+        self.assertEqual(hook.update_steps(["in_progress"], PLAN, {"start": 9}), ["in_progress"])
+
+
 class TestConcurrency(HookCase):
     """Hooks that fire at the same instant must not both open an ask."""
 

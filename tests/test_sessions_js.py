@@ -248,6 +248,36 @@ class TestSessionModel(unittest.TestCase):
         ])
         self.assertEqual(out["sessions"][0]["state"], "need")
 
+    def test_step_progress_on_working_and_ready_rows(self):
+        s = self.one([
+            ev(6, "started", "Working", doing="Thinking"),
+            ev(5, "started", "Working", doing="Updating its task list", steps_done=2, steps_total=6, steps_current=3),
+            ev(1, "started", "Working", doing="Editing files"),
+        ])
+        self.assertEqual(s["steps"], {"done": 2, "total": 6, "current": 3})
+        self.assertEqual(s["line"], "Step 3 of 6 · Editing files · turn running 6m")
+        s = self.one([
+            ev(9, "started", "Working", doing="Thinking"),
+            ev(8, "started", "Working", steps_done=4, steps_total=6, steps_current=5),
+            ev(5, "finished", "Your turn"),
+        ])
+        self.assertEqual(s["line"], "Finished a turn after 4m · 4 of 6 steps done")
+
+    def test_all_steps_done(self):
+        s = self.one([
+            ev(3, "started", "Working", doing="Thinking"),
+            ev(2, "started", "Working", doing="Updating its task list", steps_done=5, steps_total=5),
+        ])
+        self.assertTrue(s["line"].startswith("All 5 steps done · "))
+        s = self.one([ev(9, "started", "Working", steps_done=5, steps_total=5), ev(5, "finished", "Your turn")])
+        self.assertNotIn("steps", s["line"])
+
+    def test_new_session_drops_old_steps_and_bad_counts_are_clamped(self):
+        s = self.one([ev(9, "started", "Working", steps_done=1, steps_total=3), ev(5, "idle", "Session opened")])
+        self.assertIsNone(s["steps"])
+        s = self.one([ev(2, "started", "Working", steps_done=99, steps_total=4)])
+        self.assertEqual(s["steps"]["done"], 4)
+
     def test_no_boot_time_keeps_old_behaviour(self):
         s = self.one([ev(50, "started", "Working", doing="Editing files")])
         self.assertEqual(s["state"], "quiet")

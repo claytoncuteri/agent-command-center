@@ -13,8 +13,11 @@ Privacy, by construction
 ------------------------
 The script reads only these stdin fields: hook_event_name, session_id, cwd,
 source, session_title, tool_name, is_interrupt, notification_type. It never
-reads the prompt, tool inputs, tool results, the assistant's message, the
-transcript, or the free text of a notification. The `detail` field is always a
+reads the prompt, tool results, the assistant's message, the transcript, or
+the free text of a notification, and reads tool inputs in one case only: for
+a task-list update (TodoWrite, the app's update_plan) it reads each step's
+status value and the list's length, never a step's text, and reports counts
+("step 3 of 6"). See update_steps(). The `detail` field is always a
 fixed template ("permission: Bash"), and `doing` is a fixed phrase chosen from
 the tool name alone ("Editing files", "Running a command"). `title` is the
 session's own title as the app shows it, when available.
@@ -207,6 +210,9 @@ def make_event(
     result: Optional[str] = None,
     title: Optional[str] = None,
     doing: Optional[str] = None,
+    steps_done: Optional[int] = None,
+    steps_total: Optional[int] = None,
+    steps_current: Optional[int] = None,
 ) -> Dict[str, Any]:
     ev: Dict[str, Any] = {
         "schema": SCHEMA,
@@ -230,6 +236,11 @@ def make_event(
         ev["title"] = title[:TITLE_MAX]
     if doing:
         ev["doing"] = doing[:DETAIL_MAX]
+    if steps_total:
+        ev["steps_done"] = int(steps_done or 0)
+        ev["steps_total"] = int(steps_total)
+        if steps_current:
+            ev["steps_current"] = int(steps_current)
     return ev
 
 
@@ -338,6 +349,77 @@ def title_from_transcript(path: Any) -> Optional[str]:
                     return found
     except OSError:
         return None
+    return None
+
+
+# ── Step progress (task lists) ──────────────────────────────────────────────────
+#
+# Sessions keep a task list: TodoWrite in the terminal, the desktop app's
+# update_plan, closed out by its wrap_up. From those inputs only the steps'
+# *status* values are read ("pending", "in_progress", "completed"), never any
+# step's text. The state keeps that list of statuses; events carry counts.
+
+_STEP_STATUSES = ("pending", "in_progress", "completed")
+_MAX_STEPS = 50
+
+
+def _statuses(items: Any) -> Optional[list]:
+    if not isinstance(items, list) or not items:
+        return None
+    out = []
+    for it in items[:_MAX_STEPS]:
+        status = it.get("status") if isinstance(it, dict) else None
+        out.append(status if status in _STEP_STATUSES else "pending")
+    return out
+
+
+def _is_app_tool(tool_name: str, name: str) -> bool:
+    return tool_name.startswith("mcp__") and tool_name.endswith("__" + name) and "ccd_turn" in tool_name
+
+
+def update_steps(steps: Any, tool_name: str, tool_input: Any) -> Optional[list]:
+    """The task list's statuses after this tool call, or None if it is not a task-list update."""
+    steps = list(steps) if isinstance(steps, list) else None
+    if not isinstance(tool_input, dict):
+        tool_input = {}
+    if tool_name == "TodoWrite":
+        return _statuses(tool_input.get("todos"))
+    if _is_app_tool(tool_name, "wrap_up"):
+        return ["completed"] * len(steps) if steps else None
+    if not _is_app_tool(tool_name, "update_plan"):
+        return None
+    fresh = _statuses(tool_input.get("items"))
+    if fresh is not None:
+        return fresh
+    if not steps:
+        return None
+    if tool_input.get("advance") is True:
+        cur = next((i for i, s in enumerate(steps) if s == "in_progress"), None)
+        if cur is not None:
+            steps[cur] = "completed"
+        nxt = next((i for i, s in enumerate(steps) if s == "pending"), None)
+        if nxt is not None:
+            steps[nxt] = "in_progress"
+        return steps
+    done, start = tool_input.get("done"), tool_input.get("start")
+    if isinstance(done, list):
+        for n in done:
+            if isinstance(n, int) and 1 <= n <= len(steps):
+                steps[n - 1] = "completed"
+    if isinstance(start, int) and 1 <= start <= len(steps):
+        steps = ["pending" if s == "in_progress" else s for s in steps]
+        steps[start - 1] = "in_progress"
+    return steps
+
+
+def current_step(steps: list) -> Optional[int]:
+    """1-based number of the step in progress, else of the next pending one."""
+    for i, s in enumerate(steps):
+        if s == "in_progress":
+            return i + 1
+    for i, s in enumerate(steps):
+        if s == "pending":
+            return i + 1
     return None
 
 
@@ -548,6 +630,14 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
         else:
             result = "answered" if tool_name == QUESTION_TOOL else None
             close_approval(agent, session_id, state, status="approved", result=result, tool_name=tool_name)
+        # A task-list update: report how far along the session is (counts only).
+        steps = update_steps(state.get("steps"), tool_name, data.get("tool_input"))
+        if steps is not None and steps != state.get("steps"):
+            state["steps"] = steps
+            save_state(session_id, state)
+            done = sum(1 for s in steps if s == "completed")
+            emit("Working", "started", doing=state.get("doing"), steps_done=done, steps_total=len(steps),
+                 steps_current=current_step(steps))
 
     elif event == "PostToolUseFailure":
         current = state.get("open")
