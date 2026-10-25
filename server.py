@@ -306,20 +306,26 @@ def api_config() -> JSONResponse:
 # The desktop app keeps one small JSON record per Code session. Two of its
 # fields tie the app's session to the Claude Code session our hook reports:
 # `sessionId` ("local_<uuid>", the app's id) and `cliSessionId` (Claude Code's
-# id, whose first 8 characters are the event stream's `session`). Nothing else
-# in the record is read or returned.
+# id, whose first 8 characters are the event stream's `session`). A third,
+# `bridgeSessionIds`, holds the session's Remote Control id ("session_<id>")
+# when Remote Control is on; it gives a claude.ai link that opens the same
+# session on a phone or another computer. Nothing else is read or returned.
 
 APP_SESSIONS_DIR = (
     pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
 )
 _APP_ID = re.compile(r"^local_[0-9a-f-]{8,64}$")
+_BRIDGE_ID = re.compile(r"^session_[A-Za-z0-9]{10,64}$")
 _APP_RECORD_MAX_BYTES = 2_000_000
 _LINKS_TTL_SECONDS = 30.0
 _links_cache: dict = {"at": 0.0, "root": None, "links": {}}
 
 
 def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] = None) -> dict:
-    """Map the event stream's 8-character session id to a claude:// link."""
+    """
+    Map the event stream's 8-character session id to its links:
+    {"app": "claude://...", "web": "https://claude.ai/code/session_..." or None}.
+    """
     root = pathlib.Path(root) if root is not None else APP_SESSIONS_DIR
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
     if _links_cache["root"] == str(root) and now - _links_cache["at"] < _LINKS_TTL_SECONDS:
@@ -351,14 +357,20 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
         if key in newest and newest[key] >= st.st_mtime:
             continue
         newest[key] = st.st_mtime
-        links[key] = "claude://claude.ai/epitaxy/" + app_id
+        bridge = rec.get("bridgeSessionIds")
+        # The newest Remote Control id is the last in the list.
+        web_ids = [b for b in bridge if isinstance(b, str) and _BRIDGE_ID.match(b)] if isinstance(bridge, list) else []
+        links[key] = {
+            "app": "claude://claude.ai/epitaxy/" + app_id,
+            "web": ("https://claude.ai/code/" + web_ids[-1]) if web_ids else None,
+        }
     _links_cache.update({"at": now, "root": str(root), "links": links})
     return links
 
 
 @app.get("/api/links")
 def api_links() -> JSONResponse:
-    """Session id (8 chars) -> link that opens it in the Claude desktop app."""
+    """Session id (8 chars) -> {"app", "web"} links that open it in Claude."""
     if not CONFIG.get("claude_app_links"):
         return JSONResponse(content={})
     return JSONResponse(content=claude_app_links())

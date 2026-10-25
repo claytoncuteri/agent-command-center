@@ -113,6 +113,13 @@ button { font: inherit; color: inherit; }
 .sec .hint { margin-left: auto; min-width: 0; font-size: 12px; color: var(--faint); text-align: right; }
 
 .list { display: flex; flex-direction: column; gap: 8px; }
+.group[hidden] { display: none; }
+.filter-bar { display: flex; align-items: center; gap: 10px; margin: 2px 2px 4px; font-size: 13px; color: var(--sub); }
+.filter-bar[hidden] { display: none; }
+.filter-bar b { color: var(--text); font-weight: 600; }
+.filter-bar button { margin-left: auto; font-size: 13px; font-weight: 600; padding: 6px 11px; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--hair-strong); background: rgba(111,208,255,.14); }
+@media (min-width: 900px) { .filter-bar { grid-column: 1 / -1; } }
 .calm { padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--hair); background: rgba(20,36,78,.45);
   color: var(--sub); font-size: 14px; display: flex; align-items: center; gap: 10px; }
 .calm::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); }
@@ -225,19 +232,29 @@ button { font: inherit; color: inherit; }
   <section class="summary" id="summary" aria-label="Sessions by state"></section>
   <nav class="chips" id="chips" aria-label="Filter by project"></nav>
 
+  <div class="filter-bar" id="filterBar" hidden></div>
+
   <div class="col-left">
-    <div class="sec"><h2>Blocked</h2><span class="n" id="nNeed"></span><span class="hint">waiting for your approval or answer</span></div>
-    <div class="list" id="listNeed"></div>
-    <div class="sec"><h2>Working</h2><span class="n" id="nWork"></span></div>
-    <div class="list" id="listWork"></div>
+    <section class="group" data-group="need">
+      <div class="sec"><h2>Blocked</h2><span class="n" id="nNeed"></span><span class="hint">waiting for your approval or answer</span></div>
+      <div class="list" id="listNeed"></div>
+    </section>
+    <section class="group" data-group="work">
+      <div class="sec"><h2>Working</h2><span class="n" id="nWork"></span></div>
+      <div class="list" id="listWork"></div>
+    </section>
   </div>
 
   <div class="col-right">
-    <div class="sec"><h2>Ready for you</h2><span class="n" id="nTurn"></span><span class="hint">waiting for your next message</span></div>
-    <div class="list" id="listTurn"></div>
-    <div class="sec"><h2>Idle</h2><span class="n" id="nIdle"></span><span class="hint">no turn in over 6h</span></div>
-    <div class="list" id="listIdle"></div>
-    <div id="closedWrap"></div>
+    <section class="group" data-group="turn">
+      <div class="sec"><h2>Ready for you</h2><span class="n" id="nTurn"></span><span class="hint">waiting for your next message</span></div>
+      <div class="list" id="listTurn"></div>
+    </section>
+    <section class="group" data-group="idle">
+      <div class="sec"><h2>Idle</h2><span class="n" id="nIdle"></span><span class="hint">no turn in over 6h</span></div>
+      <div class="list" id="listIdle"></div>
+    </section>
+    <section class="group" data-group="closed"><div id="closedWrap"></div></section>
   </div>
 
   <footer class="foot" id="foot"></footer>
@@ -253,7 +270,11 @@ button { font: inherit; color: inherit; }
   'use strict';
   var M = window.ACCSessions;
   var EVENTS = [];
-  var LINKS = {};   // session (8 chars) -> claude:// link, when claude_app_links is on
+  var LINKS = {};   // session (8 chars) -> {app, web} links, when claude_app_links is on
+  // On this computer, open the desktop app; from a phone or another device,
+  // open the session's Remote Control page on claude.ai (the app link would
+  // only reach the phone app's home screen).
+  var ON_THIS_MACHINE = ['127.0.0.1', 'localhost', '[::1]', '::1'].indexOf(location.hostname) >= 0;
   var MODEL = null;
   var lastUpdate = null;
   var openKey = null;
@@ -262,11 +283,18 @@ button { font: inherit; color: inherit; }
   function load(defaults) {
     try {
       var raw = localStorage.getItem('acc.sessions.ui');
-      if (raw) { var v = JSON.parse(raw); for (var k in defaults) if (!(k in v)) v[k] = defaults[k]; return v; }
+      // Only the folds come back; filters saved by older versions are ignored.
+      if (raw) {
+        var v = JSON.parse(raw) || {};
+        if (typeof v.idleOpen === 'boolean') defaults.idleOpen = v.idleOpen;
+        if (typeof v.closedOpen === 'boolean') defaults.closedOpen = v.closedOpen;
+      }
     } catch (_) {}
     return defaults;
   }
-  function save() { try { localStorage.setItem('acc.sessions.ui', JSON.stringify(ui)); } catch (_) {} }
+  // Only the folds are remembered between visits. A state or project filter that
+  // silently came back on the next visit made full counts sit over empty lists.
+  function save() { try { localStorage.setItem('acc.sessions.ui', JSON.stringify({ idleOpen: ui.idleOpen, closedOpen: ui.closedOpen })); } catch (_) {} }
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -332,10 +360,15 @@ button { font: inherit; color: inherit; }
   }
 
   function linkFor(s) {
-    return (s.source === 'claude-code' && s.session && LINKS[s.session]) || null;
+    var entry = s.source === 'claude-code' && s.session && LINKS[s.session];
+    if (!entry) return null;
+    if (typeof entry === 'string') return ON_THIS_MACHINE ? entry : null;  // older server
+    return (ON_THIS_MACHINE ? entry.app : entry.web) || null;
   }
   function openLink(href, label) {
-    return '<a class="open-claude" href="' + esc(href) + '">' + esc(label) +
+    // A web link opens beside the dashboard so the dashboard stays where it was.
+    var web = /^https:\/\//.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '';
+    return '<a class="open-claude" href="' + esc(href) + '"' + web + '>' + esc(label) +
       ' <span aria-hidden="true">↗</span></a>';
   }
 
@@ -349,7 +382,10 @@ button { font: inherit; color: inherit; }
     var t = now();
     MODEL = M.deriveSessions(EVENTS, t);
     var all = MODEL.sessions;
-    var c = MODEL.counts;
+    // Tile counts follow the project filter, so a number always matches its list.
+    var inProject = all.filter(function (s) { return !ui.project || s.project === ui.project; });
+    var c = { need: 0, work: 0, turn: 0, idle: 0 };
+    inProject.forEach(function (s) { var b = bucket(s); if (b in c) c[b] += 1; });
 
     var active = all.filter(function (s) { return s.state !== 'closed'; });
     $('brandSub').textContent = active.length + ' session' + (active.length === 1 ? '' : 's') +
@@ -376,6 +412,22 @@ button { font: inherit; color: inherit; }
     var idle = shown.filter(function (s) { return s.state === 'idle'; });
     var closed = shown.filter(function (s) { return s.state === 'closed'; });
 
+    var LABELS = { need: 'Blocked', work: 'Working', turn: 'Ready for you', idle: 'Idle' };
+    document.querySelectorAll('.group').forEach(function (g) {
+      g.hidden = !!ui.state && g.getAttribute('data-group') !== ui.state;
+    });
+    var bar = $('filterBar');
+    if (ui.state || ui.project) {
+      bar.innerHTML = 'Showing <b>' + esc(ui.state ? LABELS[ui.state] : 'all sessions') + '</b>' +
+        (ui.project ? ' in <b>' + esc(ui.project) + '</b>' : '') +
+        '<button data-clear="1">Show all</button>';
+      bar.hidden = false;
+    } else {
+      bar.hidden = true;
+      bar.innerHTML = '';
+    }
+    var where = ui.project ? ' in ' + ui.project : '';
+
     $('nNeed').textContent = need.length || '';
     $('nWork').textContent = work.length || '';
     $('nTurn').textContent = turn.length || '';
@@ -383,8 +435,8 @@ button { font: inherit; color: inherit; }
 
     renderList('listNeed', need, t, '<div class="calm">Nothing is blocked.' +
       (turn.length ? ' ' + turn.length + (turn.length === 1 ? ' session is' : ' sessions are') + ' ready for you.' : '') + '</div>');
-    renderList('listWork', work, t, '<div class="calm" style="--x:0">No session is working.</div>');
-    renderList('listTurn', turn, t, '');
+    renderList('listWork', work, t, '<div class="calm">No session is working' + esc(where) + '.</div>');
+    renderList('listTurn', turn, t, ui.state === 'turn' || ui.project ? '<div class="calm">No session is ready for you' + esc(where) + '.</div>' : '');
     var IDLE_SHOW = 3;
     var idleShown = ui.idleOpen ? idle : idle.slice(0, IDLE_SHOW);
     renderList('listIdle', idleShown, t, '');
@@ -443,15 +495,20 @@ button { font: inherit; color: inherit; }
   document.addEventListener('click', function (ev) {
     // "Open in Claude" follows its claude:// link and does not also open the sheet.
     if (ev.target.closest && ev.target.closest('a.open-claude')) return;
-    var el = ev.target.closest ? ev.target.closest('[data-key],[data-state],[data-project],[data-fold],#sheetClose') : null;
+    var el = ev.target.closest ? ev.target.closest('[data-key],[data-state],[data-project],[data-fold],[data-clear],#sheetClose') : null;
     if (!el) { if (ev.target === $('sheetBg')) closeSheet(); return; }
     if (el.id === 'sheetClose') { closeSheet(); return; }
     if (el.hasAttribute('data-key')) { openSheet(el.getAttribute('data-key')); return; }
-    if (el.hasAttribute('data-state')) { var st = el.getAttribute('data-state'); ui.state = ui.state === st ? null : st; }
+    if (el.hasAttribute('data-clear')) { ui.state = null; ui.project = null; }
+    else if (el.hasAttribute('data-state')) { var st = el.getAttribute('data-state'); ui.state = ui.state === st ? null : st; }
     else if (el.hasAttribute('data-project')) { ui.project = el.getAttribute('data-project') || null; }
     else if (el.getAttribute('data-fold') === 'idle') { ui.idleOpen = !ui.idleOpen; }
     else if (el.getAttribute('data-fold') === 'closed') { ui.closedOpen = !ui.closedOpen; }
     save(); render();
+    if (el.hasAttribute('data-state') && ui.state) {
+      var g = document.querySelector('.group[data-group="' + ui.state + '"]');
+      if (g && g.scrollIntoView) g.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
   });
   document.addEventListener('keydown', function (ev) {
     if (ev.key === 'Escape' && openKey) { closeSheet(); return; }
