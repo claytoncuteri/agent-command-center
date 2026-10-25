@@ -107,9 +107,9 @@ button { font: inherit; color: inherit; }
 .chip em { font-style: normal; color: var(--gold); margin-left: 4px; }
 
 .sec { display: flex; align-items: baseline; gap: 8px; margin: 18px 2px 8px; }
-.sec h2 { font-family: "Space Grotesk"; font-size: 15px; font-weight: 600; letter-spacing: .4px; }
+.sec h2 { font-family: "Space Grotesk"; font-size: 15px; font-weight: 600; letter-spacing: .4px; white-space: nowrap; }
 .sec .n { font-size: 13px; color: var(--faint); }
-.sec .hint { margin-left: auto; font-size: 12px; color: var(--faint); text-align: right; }
+.sec .hint { margin-left: auto; min-width: 0; font-size: 12px; color: var(--faint); text-align: right; }
 
 .list { display: flex; flex-direction: column; gap: 8px; }
 .calm { padding: 12px 14px; border-radius: var(--radius); border: 1px solid var(--hair); background: rgba(20,36,78,.45);
@@ -225,14 +225,14 @@ button { font: inherit; color: inherit; }
   <nav class="chips" id="chips" aria-label="Filter by project"></nav>
 
   <div class="col-left">
-    <div class="sec"><h2>Needs you</h2><span class="n" id="nNeed"></span><span class="hint">oldest first</span></div>
+    <div class="sec"><h2>Blocked</h2><span class="n" id="nNeed"></span><span class="hint">waiting for your approval or answer</span></div>
     <div class="list" id="listNeed"></div>
     <div class="sec"><h2>Working</h2><span class="n" id="nWork"></span></div>
     <div class="list" id="listWork"></div>
   </div>
 
   <div class="col-right">
-    <div class="sec"><h2>Your turn</h2><span class="n" id="nTurn"></span><span class="hint">finished, waiting for your next message</span></div>
+    <div class="sec"><h2>Ready for you</h2><span class="n" id="nTurn"></span><span class="hint">waiting for your next message</span></div>
     <div class="list" id="listTurn"></div>
     <div class="sec"><h2>Idle</h2><span class="n" id="nIdle"></span><span class="hint">no turn in over 6h</span></div>
     <div class="list" id="listIdle"></div>
@@ -354,7 +354,7 @@ button { font: inherit; color: inherit; }
     $('brandSub').textContent = active.length + ' session' + (active.length === 1 ? '' : 's') +
       (MODEL.hosts.length ? ' on ' + MODEL.hosts.length + ' machine' + (MODEL.hosts.length === 1 ? '' : 's') : '');
 
-    var tiles = [['need', 'Need you'], ['work', 'Working'], ['turn', 'Your turn'], ['idle', 'Idle']];
+    var tiles = [['need', 'Blocked'], ['work', 'Working'], ['turn', 'Ready'], ['idle', 'Idle']];
     $('summary').innerHTML = tiles.map(function (p) {
       var hot = p[0] === 'need' && c.need > 0 ? ' hot' : '';
       return '<button class="sum ' + p[0] + hot + (ui.state === p[0] ? ' on' : '') + '" data-state="' + p[0] + '">' +
@@ -380,7 +380,8 @@ button { font: inherit; color: inherit; }
     $('nTurn').textContent = turn.length || '';
     $('nIdle').textContent = idle.length || '';
 
-    renderList('listNeed', need, t, '<div class="calm">Nothing needs you right now.</div>');
+    renderList('listNeed', need, t, '<div class="calm">Nothing is blocked.' +
+      (turn.length ? ' ' + turn.length + (turn.length === 1 ? ' session is' : ' sessions are') + ' ready for you.' : '') + '</div>');
     renderList('listWork', work, t, '<div class="calm" style="--x:0">No session is working.</div>');
     renderList('listTurn', turn, t, '');
     var IDLE_SHOW = 3;
