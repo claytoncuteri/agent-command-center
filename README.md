@@ -64,11 +64,20 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 
 ### Custom logo
 
-Point `logo` at a local file path or a `data:` URI.
-The file is read by your browser, not committed to the repo.
+Set `logo` to an image the browser can load: a `data:` URI (most reliable for
+a local image) or an `http(s)` URL. A list shows several portraits in the
+session view's header, each in a gold ring and joined by a small star; the
+classic view uses the first. Keep it in `config.json`, which is never
+committed.
 
 ```json
-{ "logo": "/Users/yourname/.acc/logo.png" }
+{ "logo": ["data:image/jpeg;base64,...", "data:image/png;base64,..."] }
+```
+
+To turn a local image into a data URI on macOS:
+
+```bash
+printf 'data:image/png;base64,%s' "$(base64 -i ~/Pictures/logo.png)"
 ```
 
 ---
