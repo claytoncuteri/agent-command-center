@@ -103,7 +103,7 @@
         state: null, since: null, ask: null, doing: null, note: null,
         turnStartedAt: null, lastTurnMs: null, lastAt: null, openedAt: null,
         lastAction: null, lastStatus: null, bars: [], events: [], steps: null,
-        pauseRequested: false, turnFinished: false
+        pauseRequested: false, turnFinished: false, limitMs: null, limitStart: null, limitResult: null
       };
       var open = {};      // approval_id -> {e, t}
       var lastState = null;
@@ -135,7 +135,15 @@
         if (e.status === 'awaiting_approval' && e.approval_id) open[e.approval_id] = it;
         if (RESOLVED[e.status] && e.approval_id) delete open[e.approval_id];
 
-        if (isTurnStart(e)) { s.turnStartedAt = t; s.doing = null; s.pauseRequested = e.pause === true; s.turnFinished = false; }
+        if (isTurnStart(e)) {
+          s.turnStartedAt = t; s.doing = null; s.pauseRequested = e.pause === true; s.turnFinished = false;
+          s.limitMs = typeof e.time_limit === 'number' ? e.time_limit * 1000 : null;
+          s.limitStart = s.limitMs ? t : null; s.limitResult = null;
+        }
+        // A time limit sent mid-turn (queued message), spotted by the hook.
+        if (e.action === 'Time limit set' && typeof e.time_limit === 'number') {
+          s.limitMs = e.time_limit * 1000; s.limitStart = t;
+        }
         // A pause request recorded after the fact (the one-time backfill).
         if (e.action === 'Pause requested' && e.pause === true) s.pauseRequested = true;
         if (e.doing && e.doing !== 'Thinking') s.doing = e.doing;
@@ -151,8 +159,8 @@
           s.turnStartedAt = null;
           s.doing = null;
         }
-        // A pause marker does not change what the session is doing.
-        if (e.action !== 'Pause requested') {
+        // Pause and time-limit markers do not change what the session is doing.
+        if (e.action !== 'Pause requested' && e.action !== 'Time limit set') {
           lastState = it;
           s.lastAction = e.action || null;
           s.lastStatus = e.status || null;
@@ -188,6 +196,17 @@
         s.since = lastT;
         s.fresh = last.action === 'Session opened' || last.action === 'Session resumed';
       }
+
+      // A time limit: when the turn ends, finished work is Ready and unfinished
+      // work is Paused. With a task list, its steps decide; without one, the clock.
+      if (s.limitMs && s.turnFinished && (s.state === 'turn' || s.state === 'idle')) {
+        var allDone = s.steps ? s.steps.done >= s.steps.total : null;
+        var early = lastT - s.limitStart < s.limitMs - 60 * 1000;
+        s.limitResult = (allDone === true || (allDone === null && early)) ? 'done' : 'paused';
+        if (s.limitResult === 'paused') { s.pauseRequested = true; }
+        else { s.fresh = false; }  // Ready (or Idle once old), never Paused
+      }
+      if (s.limitMs && !s.turnFinished) s.limitLeft = s.limitStart + s.limitMs - now;
 
       // You asked it to pause and it reached a pause point: it waits, however
       // long, until your next message. Working toward that point shows as working.
@@ -274,6 +293,13 @@
     return 'Step ' + (s.steps.current || s.steps.done + 1) + ' of ' + s.steps.total + ' · ';
   }
 
+  // "Time limit · 6m left · " or "Over the time limit by 2m · " while working.
+  function limitLabel(s) {
+    if (!s.limitMs || typeof s.limitLeft !== 'number') return '';
+    if (s.limitLeft >= 0) return 'Time limit \u00b7 ' + dur(Math.max(1000, s.limitLeft)) + ' left \u00b7 ';
+    return 'Over the time limit by ' + dur(-s.limitLeft) + ' \u00b7 ';
+  }
+
   // The one-line "what is going on" for a row.
   function describe(s, now) {
     now = typeof now === 'number' ? now : Date.now();
@@ -281,15 +307,16 @@
       case 'need': return s.ask ? s.ask.kind + ': ' + s.ask.text : 'Waiting for you';
       case 'error': return 'Error: ' + (s.note || 'failed');
       case 'work':
-        return (s.pausing ? 'Wrapping up to pause \u00b7 ' : '') + stepLabel(s) + (s.doing || 'Working') +
+        return limitLabel(s) + (s.pausing ? 'Wrapping up to pause \u00b7 ' : '') + stepLabel(s) + (s.doing || 'Working') +
           (s.turnStartedAt !== null ? ' · turn running ' + dur(now - s.turnStartedAt) : '');
-      case 'quiet': return stepLabel(s) + (s.doing || 'Working') + ' · silent ' + dur(now - s.lastAt);
+      case 'quiet': return limitLabel(s) + stepLabel(s) + (s.doing || 'Working') + ' · silent ' + dur(now - s.lastAt);
       case 'turn':
         if (s.fresh) return 'Opened, waiting for your first message';
+        if (s.limitResult === 'done') return 'Finished within the ' + dur(s.limitMs) + ' time limit';
         return (s.lastTurnMs !== null ? 'Finished a turn after ' + dur(s.lastTurnMs) : 'Finished a turn') +
           (s.steps && s.steps.done < s.steps.total ? ' · ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '');
       case 'paused':
-        return 'Paused at your request' +
+        return (s.limitResult === 'paused' ? 'Paused at the ' + dur(s.limitMs) + ' time limit' : 'Paused at your request') +
           (s.steps && s.steps.done < s.steps.total ? ' \u00b7 ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '') +
           ' \u00b7 send a message to resume';
       case 'idle':
@@ -310,6 +337,7 @@
       return 'Asked ' + (a.kind === 'Question' ? 'you a question' : 'permission to ' + a.text);
     }
     if (e.action === 'Pause requested') return 'You asked it to pause';
+    if (e.action === 'Time limit set') return 'You set a ' + dur(e.time_limit * 1000) + ' time limit';
     if (e.status === 'started' && e.action === 'Working') {
       if (e.pause === true) return 'You asked it to pause; wrapping up';
       if (!e.doing || e.doing === 'Thinking') return 'You sent a message; working';
@@ -321,7 +349,7 @@
 
   return {
     deriveSessions: deriveSessions, describe: describe, eventLine: eventLine,
-    rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel,
+    rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel, limitLabel: limitLabel,
     QUIET_AFTER: QUIET_AFTER, IDLE_AFTER: IDLE_AFTER
   };
 }));

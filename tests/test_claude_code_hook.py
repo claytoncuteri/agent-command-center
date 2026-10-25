@@ -389,6 +389,19 @@ class TestPauseRequests(HookCase):
         super().setUp()
         os.environ["ACC_DETECT_PAUSE"] = "1"
 
+    def test_time_limits_are_not_pauses(self):
+        cases = {"you have 10 minutes to complete this task, if you have not completed, then please pause": 600,
+                 "yes please, if you can do it in 10 min": 600, "pause in 15 minutes": 900, "you have 2 hours": 7200}
+        for text, secs in cases.items():
+            self.assertEqual(hook.time_limit_seconds(text), secs, text)
+            self.assertFalse(hook.is_pause_request(text), text)
+        evs = self.run_hook("UserPromptSubmit", prompt="you have 10 minutes, then please pause " + SENTINEL)
+        self.assertEqual(evs[-1].get("time_limit"), 600)
+        self.assertNotIn("pause", evs[-1])
+        evs = self.run_hook("Stop")
+        self.assertNotIn("pause", evs[-1])
+        self.assertNotIn(SENTINEL, self.raw())
+
     def test_real_phrasings_detected(self):
         for text in self.ASKS:
             self.assertTrue(hook.is_pause_request(text), text)
