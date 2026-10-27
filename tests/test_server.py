@@ -10,6 +10,7 @@ import pathlib
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -346,6 +347,19 @@ class TestBootTime(unittest.TestCase):
     def test_config_reports_it(self):
         body = json.loads(server.api_config().body)
         self.assertIn("booted_at", body)
+
+
+class TestProjectNames(unittest.TestCase):
+    def test_config_passes_clean_names_only(self):
+        raw = {"Projects/Orion": "Orion", "orion-*": "Orion", "": "X", "bad": 3, "blank": "  ", "long": "n" * 90}
+        with mock.patch.dict(server.CONFIG, {"project_names": raw}):
+            body = json.loads(server.api_config().body)
+        self.assertEqual(body["project_names"], {"Projects/Orion": "Orion", "orion-*": "Orion", "long": "n" * 40})
+
+    def test_missing_or_wrong_type_is_empty(self):
+        for value in (None, ["x"], "x"):
+            with mock.patch.dict(server.CONFIG, {"project_names": value}):
+                self.assertEqual(json.loads(server.api_config().body)["project_names"], {})
 
 
 class TestClaudeAppLinks(unittest.TestCase):

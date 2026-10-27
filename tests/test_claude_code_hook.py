@@ -684,6 +684,49 @@ class TestAgentName(unittest.TestCase):
         self.assertEqual(hook.agent_name(""), "unknown")
 
 
+class TestPlace(unittest.TestCase):
+    """`where` is the folder relative to home, so the page can name projects."""
+
+    def setUp(self):
+        self.env = mock.patch.dict(os.environ, {"HOME": "/Users/x"})
+        self.env.start()
+
+    def tearDown(self):
+        self.env.stop()
+
+    def test_relative_to_home(self):
+        self.assertEqual(hook.place("/Users/x/Projects/Acme Corp/Website/"), "Projects/Acme Corp/Website")
+
+    def test_worktree_maps_to_repo(self):
+        self.assertEqual(hook.place("/Users/x/Projects/Site/.claude/worktrees/contact-page-70f4bb"), "Projects/Site")
+
+    def test_outside_home_is_left_out(self):
+        self.assertIsNone(hook.place("/private/tmp/scratch"))
+        self.assertIsNone(hook.place("/Users/xy/Projects/Orion"))
+        self.assertIsNone(hook.place("/Users/x"))
+        self.assertIsNone(hook.place(""))
+
+    def test_long_paths_are_cut(self):
+        self.assertEqual(len(hook.place("/Users/x/" + "a" * 500)), hook.WHERE_MAX)
+
+
+class TestWhereOnEvents(HookCase):
+    def test_every_event_carries_where_including_approvals(self):
+        with mock.patch.dict(os.environ, {"HOME": "/Users/x"}):
+            self.run_hook("UserPromptSubmit")
+            self.run_hook("PermissionRequest", tool_name="Bash")
+            evs = self.run_hook("PostToolUse", tool_name="Bash")
+        self.assertGreaterEqual(len(evs), 3)
+        self.assertIn("awaiting_approval", [e["status"] for e in evs])
+        self.assertIn("approved", [e["status"] for e in evs])
+        self.assertEqual({e.get("where") for e in evs}, {"Projects/Demo"})
+
+    def test_outside_home_has_no_where(self):
+        with mock.patch.dict(os.environ, {"HOME": "/Users/x"}):
+            evs = self.run_hook("UserPromptSubmit", cwd="/private/tmp/demo")
+        self.assertNotIn("where", evs[-1])
+
+
 class TestProcess(unittest.TestCase):
     """Run the script as Claude Code would: JSON on stdin, exit 0, silent."""
 

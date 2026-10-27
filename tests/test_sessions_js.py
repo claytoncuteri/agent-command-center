@@ -22,7 +22,10 @@ HARNESS = r"""
 const m = require(process.argv[1]);
 const input = JSON.parse(require('fs').readFileSync(0, 'utf8'));
 const now = Date.parse(input.now);
-const out = m.deriveSessions(input.events, now, input.bootedAt ? { bootedAt: Date.parse(input.bootedAt) } : undefined);
+const opts = {};
+if (input.bootedAt) opts.bootedAt = Date.parse(input.bootedAt);
+if (input.names) opts.names = input.names;
+const out = m.deriveSessions(input.events, now, opts);
 out.sessions.forEach(s => { s.line = m.describe(s, now); s.timeline = s.events.map(m.eventLine); delete s.events; });
 process.stdout.write(JSON.stringify(out));
 """
@@ -44,10 +47,10 @@ def ev(minutes_ago, status, action, session="s1", agent="Demo", **extra):
 
 @unittest.skipIf(NODE is None, "node is not installed")
 class TestSessionModel(unittest.TestCase):
-    def derive(self, events, booted_at=None):
+    def derive(self, events, booted_at=None, names=None):
         proc = subprocess.run(
             [NODE, "-e", HARNESS, str(MODEL)],
-            input=json.dumps({"now": NOW, "events": events, "bootedAt": booted_at}),
+            input=json.dumps({"now": NOW, "events": events, "bootedAt": booted_at, "names": names}),
             capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -371,6 +374,56 @@ class TestSessionModel(unittest.TestCase):
     def test_bad_events_are_ignored(self):
         out = self.derive([{"agent": "X"}, {"ts": "nope", "agent": "Y"}, None, {"ts": NOW}])
         self.assertEqual(out["sessions"], [])
+
+
+    # Friendly project names (config project_names)
+    NAMES = {
+        "Projects/Orion": "Orion",
+        "~/Projects/Orion/Mobile/": "Orion App",
+        "orion-*": "Orion",
+        "orion-mobile-*": "Orion App",
+        "SRC": "Code",
+    }
+
+    def named(self, agent, where=None, names=None):
+        extra = {"where": where} if where else {}
+        out = self.derive([ev(5, "idle", "Session opened", agent=agent, **extra)], names=names or self.NAMES)
+        return out["sessions"][0]
+
+    def test_path_rule_covers_subfolders_and_longest_wins(self):
+        self.assertEqual(self.named("api", "Projects/Orion/api")["project"], "Orion")
+        self.assertEqual(self.named("Orion", "Projects/Orion")["project"], "Orion")
+        self.assertEqual(self.named("ios", "Projects/Orion/Mobile/ios")["project"], "Orion App")
+        # A prefix only matches whole folders.
+        self.assertEqual(self.named("Orionette", "Projects/Orionette")["project"], "Orionette")
+
+    def test_folder_rules_exact_then_longest_pattern(self):
+        self.assertEqual(self.named("orion-fix-login")["project"], "Orion")
+        self.assertEqual(self.named("orion-mobile-tabs")["project"], "Orion App")
+        self.assertEqual(self.named("src")["project"], "Code")   # case-insensitive
+        self.assertEqual(self.named("Other")["project"], "Other")
+
+    def test_path_beats_folder_rule(self):
+        self.assertEqual(self.named("src", "Projects/Orion/src")["project"], "Orion")
+
+    def test_session_keeps_its_name_in_an_unnamed_subfolder(self):
+        s = self.derive([
+            ev(10, "idle", "Session opened", agent="orion-fix"),
+            ev(5, "started", "Working", agent="tools"),
+        ], names=self.NAMES)["sessions"][0]
+        self.assertEqual(s["project"], "Orion")
+        self.assertEqual(s["folder"], "tools")
+
+    def test_named_sessions_share_one_chip(self):
+        out = self.derive([
+            ev(10, "idle", "Session opened", session="a", agent="orion-one"),
+            ev(9, "idle", "Session opened", session="b", agent="orion-two"),
+        ], names=self.NAMES)
+        self.assertEqual([(p["name"], p["total"]) for p in out["projects"]], [("Orion", 2)])
+
+    def test_bad_names_config_is_ignored(self):
+        for bad in ("nope", ["x"], {"": "X", "a": "", "b": 3}):
+            self.assertEqual(self.named("a", names=bad)["project"], "a")
 
 
 if __name__ == "__main__":
