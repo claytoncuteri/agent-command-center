@@ -50,6 +50,6 @@
   "_touch_icon_comment": "Optional PNG for the iPhone home-screen icon, served at /apple-touch-icon.png.",
   "touch_icon": null,
 
-  "_project_names_comment": "Friendly project names in the session view. A key with a slash is a folder under home and everything inside it; otherwise a folder name, with * standing for the rest. The longest path wins, then an exact name, then the longest pattern.",
+  "_project_names_comment": "Friendly project names in the session view. A key with a slash is a folder under home and everything inside it; otherwise a folder name, with * standing for the rest. A * in the name repeats what the key's * matched ("Projects/Labs/lab-*": "*" names lab-night_owl "Night Owl"). The longest path wins, then an exact name, then the longest pattern.",
   "project_names": {}
 }

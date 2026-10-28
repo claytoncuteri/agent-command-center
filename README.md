@@ -315,6 +315,10 @@ names that are quick to read and type:
   folders outside home are left out).
 - A key without a slash is a folder name; `*` stands for the rest of it. This
   also names older events written before `where` existed.
+- A `*` in the name repeats what the key's `*` matched, made readable, so new
+  folders name themselves: with `"Projects/Labs/lab-*": "*"`, a new
+  `lab-night_owl` folder shows as "Night Owl". In a path key, `*` matches
+  within one folder.
 - Case does not matter. The longest path wins, then an exact folder name, then
   the longest pattern. A session no rule matches keeps its folder name, and the
   session sheet shows the folder next to the friendly name.
