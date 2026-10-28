@@ -34,6 +34,46 @@
     return (e.host || '') + '|' + (e.session || e.agent || 'unknown');
   }
 
+  // Friendly project names from the config's project_names, short to type:
+  //   "Projects/Orion": "Orion"   a folder under home and everything inside it
+  //   "orion-*": "Orion"          a folder name; * stands for the rest
+  //   "src": "Orion"              a folder name exactly
+  // Case does not matter. The longest path wins, then an exact folder name,
+  // then the longest pattern. A session no rule matches keeps its folder name.
+  function compileNames(map) {
+    var rules = { paths: [], exact: {}, globs: [] };
+    if (!map || typeof map !== 'object') return rules;
+    Object.keys(map).forEach(function (k) {
+      var name = map[k];
+      if (typeof name !== 'string' || !name.trim()) return;
+      name = name.trim().slice(0, 40);
+      var key = k.trim().toLowerCase().replace(/^~\//, '').replace(/^\/+|\/+$/g, '');
+      if (!key) return;
+      if (key.indexOf('/') >= 0) rules.paths.push({ key: key, name: name });
+      else if (key.slice(-1) === '*') rules.globs.push({ key: key.slice(0, -1), name: name });
+      else rules.exact[key] = name;
+    });
+    rules.paths.sort(function (a, b) { return b.key.length - a.key.length; });
+    rules.globs.sort(function (a, b) { return b.key.length - a.key.length; });
+    return rules;
+  }
+
+  // The friendly name for one event's folder, or null when no rule matches.
+  function projectName(where, folder, rules) {
+    var w = typeof where === 'string' ? where.toLowerCase() : '';
+    var i;
+    for (i = 0; w && i < rules.paths.length; i++) {
+      var k = rules.paths[i].key;
+      if (w === k || w.indexOf(k + '/') === 0) return rules.paths[i].name;
+    }
+    var f = (folder || '').toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(rules.exact, f)) return rules.exact[f];
+    for (i = 0; i < rules.globs.length; i++) {
+      if (f.indexOf(rules.globs[i].key) === 0) return rules.globs[i].name;
+    }
+    return null;
+  }
+
   // "permission: Bash" -> what Claude wants to do, in plain words.
   var TOOL_ASK = {
     Bash: 'run a shell command (Bash)',
@@ -83,9 +123,11 @@
   }
 
   // opts.bootedAt (ms): when the machine running the sessions last started, if known.
+  // opts.names: the config's project_names (see compileNames).
   function deriveSessions(events, now, opts) {
     now = typeof now === 'number' ? now : Date.now();
     var bootedAt = opts && typeof opts.bootedAt === 'number' ? opts.bootedAt : null;
+    var rules = compileNames(opts && opts.names);
     var groups = {};
     (events || []).forEach(function (e) {
       if (!e || !e.agent) return;
@@ -99,7 +141,7 @@
     Object.keys(groups).forEach(function (k) {
       var list = groups[k].sort(function (a, b) { return a.t - b.t; });
       var s = {
-        key: k, project: null, title: null, host: null, session: null, source: null,
+        key: k, project: null, folder: null, title: null, host: null, session: null, source: null,
         state: null, since: null, ask: null, doing: null, note: null,
         turnStartedAt: null, lastTurnMs: null, lastAt: null, openedAt: null,
         lastAction: null, lastStatus: null, bars: [], events: [], steps: null,
@@ -107,10 +149,13 @@
       };
       var open = {};      // approval_id -> {e, t}
       var lastState = null;
+      var named = null;   // the latest friendly name; a session may cd into an unnamed subfolder
 
       list.forEach(function (it) {
         var e = it.e, t = it.t;
-        s.project = e.agent;
+        s.folder = e.agent;
+        named = projectName(e.where, e.agent, rules) || named;
+        s.project = named || e.agent;
         s.host = e.host || s.host;
         s.session = e.session || s.session;
         s.source = e.source || s.source;
@@ -348,7 +393,7 @@
   }
 
   return {
-    deriveSessions: deriveSessions, describe: describe, eventLine: eventLine,
+    deriveSessions: deriveSessions, describe: describe, projectName: projectName, compileNames: compileNames, eventLine: eventLine,
     rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel, limitLabel: limitLabel,
     QUIET_AFTER: QUIET_AFTER, IDLE_AFTER: IDLE_AFTER
   };

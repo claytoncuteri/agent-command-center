@@ -20,7 +20,9 @@ status value and the list's length, never a step's text, and reports counts
 ("step 3 of 6"). See update_steps(). The `detail` field is always a
 fixed template ("permission: Bash"), and `doing` is a fixed phrase chosen from
 the tool name alone ("Editing files", "Running a command"). `title` is the
-session's own title as the app shows it, when available.
+session's own title as the app shows it, when available. `where` is the
+session's folder relative to your home folder ("Projects/Orion/app"), so the
+dashboard can give projects friendly names; folders outside home are left out.
 
 Opt-in, off by default: with ACC_DETECT_PAUSE=1 the prompt is checked in
 memory for a request to pause ("please pause", "closing my laptop") and only a
@@ -92,6 +94,7 @@ SCHEMA = "acc/1"
 MAX_LINE_BYTES = 3500
 DETAIL_MAX = 64
 TITLE_MAX = 100
+WHERE_MAX = 160
 QUESTION_TOOL = "AskUserQuestion"
 
 _SAFE_ID = re.compile(r"[^A-Za-z0-9_-]")
@@ -189,6 +192,18 @@ def agent_name(cwd: str) -> str:
     return name[:60]
 
 
+def place(cwd: str) -> Optional[str]:
+    """The session's folder relative to home ("Projects/Orion"), or None outside home."""
+    cwd = (cwd or "").rstrip("/")
+    marker = "/.claude/worktrees/"
+    if marker in cwd:
+        cwd = cwd.split(marker, 1)[0]
+    home = os.path.expanduser("~").rstrip("/")
+    if not home or not cwd.startswith(home + "/"):
+        return None
+    return cwd[len(home) + 1:][:WHERE_MAX] or None
+
+
 def append_event(payload: Dict[str, Any]) -> None:
     path = event_file()
     _ensure_dir(os.path.dirname(path))
@@ -210,6 +225,7 @@ def make_event(
     session_id: str,
     action: str,
     status: str,
+    where: Optional[str] = None,
     level: str = "info",
     approval_id: Optional[str] = None,
     detail: Optional[str] = None,
@@ -234,6 +250,8 @@ def make_event(
         "host": _host(),
         "session": session_id[:8],
     }
+    if where:
+        ev["where"] = where[:WHERE_MAX]
     if approval_id:
         ev["approval_id"] = approval_id
     if detail:
@@ -606,7 +624,8 @@ def _resolution_action(kind: str, status: str, result: Optional[str]) -> str:
 
 
 def open_approval(
-    agent: str, session_id: str, state: Dict[str, Any], *, tool_name: str, kind: str
+    agent: str, session_id: str, state: Dict[str, Any], *, tool_name: str, kind: str,
+    where: Optional[str] = None,
 ) -> None:
     """Record a new open approval, closing any different one first."""
     current = state.get("open")
@@ -614,7 +633,7 @@ def open_approval(
         if current.get("tool_name") == tool_name and current.get("kind") == kind:
             return  # already shown; a second signal for the same prompt
         # A new prompt arrived while another was open: the old one is gone.
-        close_approval(agent, session_id, state, status="declined", result="superseded")
+        close_approval(agent, session_id, state, status="declined", result="superseded", where=where)
     approval_id = _new_approval_id(session_id)
     if kind == "question":
         detail = "question"
@@ -628,6 +647,7 @@ def open_approval(
             session_id=session_id,
             action=_action_for(kind),
             status="awaiting_approval",
+            where=where,
             level="flash",
             approval_id=approval_id,
             detail=detail,
@@ -645,6 +665,7 @@ def close_approval(
     status: str,
     result: Optional[str] = None,
     tool_name: Optional[str] = None,
+    where: Optional[str] = None,
 ) -> bool:
     """
     Resolve the open approval. With tool_name given, only when it matches.
@@ -661,6 +682,7 @@ def close_approval(
             session_id=session_id,
             action=_resolution_action(current.get("kind", "permission"), status, result),
             status=status,
+            where=where,
             approval_id=current.get("approval_id"),
             result=result,
         )
@@ -729,13 +751,15 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
     event = data.get("hook_event_name")
     if not isinstance(event, str):
         return
-    agent = agent_name(data.get("cwd") if isinstance(data.get("cwd"), str) else "")
+    cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else ""
+    agent = agent_name(cwd)
+    where = place(cwd)
     tool_name = data.get("tool_name")
     tool_name = tool_name if isinstance(tool_name, str) else ""
     state = load_state(session_id)
 
     def emit(action: str, status: str, **kw: Any) -> None:
-        append_event(make_event(agent=agent, session_id=session_id, action=action, status=status, **kw))
+        append_event(make_event(agent=agent, session_id=session_id, action=action, status=status, where=where, **kw))
 
     def set_doing(label: Optional[str]) -> None:
         if label:
@@ -751,7 +775,7 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
             if source == "resume":
                 # A prompt that was open when the app quit or the machine
                 # restarted is gone; resuming does not bring it back.
-                close_approval(agent, session_id, state, status="declined", result="not run")
+                close_approval(agent, session_id, state, where=where, status="declined", result="not run")
             emit("Session resumed", "idle", title=title)
         else:
             clear_state(session_id)
@@ -759,7 +783,7 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
             emit("Session opened", "idle", title=title)
 
     elif event == "UserPromptSubmit":
-        close_approval(agent, session_id, state, status="declined", result="not run")
+        close_approval(agent, session_id, state, where=where, status="declined", result="not run")
         limit = time_limit_seconds(data.get("prompt"))
         pause = is_pause_request(data.get("prompt"))
         state.pop("pause", None)
@@ -773,11 +797,11 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
 
     elif event == "PermissionRequest":
         kind = "question" if tool_name == QUESTION_TOOL else "permission"
-        open_approval(agent, session_id, state, tool_name=tool_name, kind=kind)
+        open_approval(agent, session_id, state, where=where, tool_name=tool_name, kind=kind)
 
     elif event == "PreToolUse":
         if tool_name == QUESTION_TOOL:
-            open_approval(agent, session_id, state, tool_name=tool_name, kind="question")
+            open_approval(agent, session_id, state, where=where, tool_name=tool_name, kind="question")
         else:
             # Only when the activity changes, so a run of edits is one event.
             label = doing_label(tool_name)
@@ -787,16 +811,16 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
 
     elif event == "Notification":
         if data.get("notification_type") == "permission_prompt" and not state.get("open"):
-            open_approval(agent, session_id, state, tool_name="", kind="permission")
+            open_approval(agent, session_id, state, where=where, tool_name="", kind="permission")
 
     elif event == "PostToolUse":
         current = state.get("open")
         if current and not current.get("tool_name"):
             # Opened from a Notification, which carries no tool name: any tool resolves it.
-            close_approval(agent, session_id, state, status="approved")
+            close_approval(agent, session_id, state, where=where, status="approved")
         else:
             result = "answered" if tool_name == QUESTION_TOOL else None
-            close_approval(agent, session_id, state, status="approved", result=result, tool_name=tool_name)
+            close_approval(agent, session_id, state, where=where, status="approved", result=result, tool_name=tool_name)
         # A pause request sent mid-turn arrives queued: spot it early, so the
         # session shows "Wrapping up to pause" before it stops.
         if os.environ.get("ACC_DETECT_PAUSE") == "1" and not state.get("pause"):
@@ -826,17 +850,17 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
         current = state.get("open")
         match_tool = None if (current and not current.get("tool_name")) else tool_name
         if data.get("is_interrupt") is True:
-            close_approval(agent, session_id, state, status="declined", result="interrupted", tool_name=match_tool)
+            close_approval(agent, session_id, state, where=where, status="declined", result="interrupted", tool_name=match_tool)
         else:
-            close_approval(agent, session_id, state, status="approved", result="tool failed", tool_name=match_tool)
+            close_approval(agent, session_id, state, where=where, status="approved", result="tool failed", tool_name=match_tool)
 
     elif event == "PermissionDenied":
         current = state.get("open")
         match_tool = None if (current and not current.get("tool_name")) else tool_name
-        close_approval(agent, session_id, state, status="declined", tool_name=match_tool)
+        close_approval(agent, session_id, state, where=where, status="declined", tool_name=match_tool)
 
     elif event == "Stop":
-        close_approval(agent, session_id, state, status="declined", result="not run")
+        close_approval(agent, session_id, state, where=where, status="declined", result="not run")
         # The app names a session after its first turn and on every rename.
         # Paused when the turn began with a pause request, or when the newest
         # message the user typed (possibly sent mid-turn, which fires no prompt
@@ -850,7 +874,7 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
         set_doing(None)
 
     elif event == "SessionEnd":
-        close_approval(agent, session_id, state, status="declined", result="not run")
+        close_approval(agent, session_id, state, where=where, status="declined", result="not run")
         emit("Session closed", "idle")
         clear_state(session_id)
 

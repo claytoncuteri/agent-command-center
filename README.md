@@ -49,6 +49,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 | `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app. Reads only the `sessionId` and `cliSessionId` fields of the app's per-session records. |
 | `remote_clients` | `[]` | Tailnet (or LAN) addresses allowed to view the dashboard through a local reverse proxy such as `tailscale serve`. Empty means no remote viewers. See [Viewing from your phone](#viewing-from-your-phone). |
 | `touch_icon` | `null` | Path to a PNG served at `/apple-touch-icon.png`, the icon an iPhone uses for Add to Home Screen. |
+| `project_names` | `{}` | Friendly project names in the session view. See [Project names](#project-names). |
 | `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
@@ -254,7 +255,8 @@ prompts and questions waiting on you show up in the approvals panel; answering
 them in Claude Code clears them.
 
 **Privacy by construction.** The hook reads only the event name, the session
-id, the working folder, the tool name and two flags. It never reads your
+id, the working folder (its name, and its path relative to your home folder),
+the tool name and two flags. It never reads your
 prompt, tool inputs or outputs, the assistant's reply, or the transcript, and
 every `detail` is a fixed template (`permission: Bash`). It prints nothing and
 always exits 0, so it cannot block or steer a session. See the docstring at the
@@ -293,6 +295,29 @@ project reports). Merge this into any `hooks` block you already have:
 only when the session's activity changes ("Editing files" to "Running a
 command"), so a run of edits is one line. The others are quick and run inline
 with a short timeout. Python 3.8 or newer is enough; the script has no dependencies.
+
+### Project names
+
+Each session is labelled with its folder name, which is often a worktree or a
+subfolder (`orion-fix-login`, `src`). `project_names` maps folders to short
+names that are quick to read and type:
+
+```json
+"project_names": {
+  "Projects/Orion": "Orion",
+  "orion-*": "Orion",
+  "Projects/Acme Corp/Website": "Acme Site"
+}
+```
+
+- A key with a slash is a folder under your home folder and everything inside
+  it. The hook records it as `where` (the session's folder relative to home;
+  folders outside home are left out).
+- A key without a slash is a folder name; `*` stands for the rest of it. This
+  also names older events written before `where` existed.
+- Case does not matter. The longest path wins, then an exact folder name, then
+  the longest pattern. A session no rule matches keeps its folder name, and the
+  session sheet shows the folder next to the friendly name.
 
 **3. Point the dashboard at the file.** Events go to
 `~/.agent-command-center/events.jsonl` (override with `ACC_EVENT_FILE`). Set

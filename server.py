@@ -56,6 +56,10 @@ _DEFAULTS: dict = {
     # or "classic" (agent cards and the approvals workflow). Both stay reachable
     # at /sessions and /classic.
     "view": "sessions",
+    # Friendly project names: {"Projects/Orion": "Orion", "orion-*": "Orion"}.
+    # A key with a slash is a folder under home (and everything inside it);
+    # otherwise it is a folder name, with * standing for the rest.
+    "project_names": {},
     # macOS + Claude desktop app only: link each Claude Code session row to the
     # same session in the app ("Open in Claude"). Reads only two id fields from
     # the app's per-session records. Off unless you turn it on.
@@ -304,6 +308,15 @@ def boot_time() -> Optional[float]:
     return None
 
 
+def project_names() -> dict:
+    """The config's project_names, keeping only short text keys and names."""
+    raw = CONFIG.get("project_names")
+    if not isinstance(raw, dict):
+        return {}
+    return {k[:200]: v[:40] for k, v in raw.items()
+            if isinstance(k, str) and isinstance(v, str) and k.strip() and v.strip()}
+
+
 @app.get("/api/config")
 def api_config() -> JSONResponse:
     """Return only the safe config fields the frontend needs to render itself."""
@@ -319,6 +332,7 @@ def api_config() -> JSONResponse:
         # When this machine last started (epoch seconds), so the page can tell
         # sessions cut off by a restart from sessions that are still running.
         "booted_at": boot_time(),
+        "project_names": project_names(),
     }
     # Only browser-acting modes need the write-back token, and only the
     # same-origin page can read it (cross-origin sites cannot read this response).

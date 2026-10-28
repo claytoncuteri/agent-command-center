@@ -290,6 +290,7 @@ button { font: inherit; color: inherit; }
   var M = window.ACCSessions;
   var EVENTS = [];
   var BOOTED_AT = null;  // ms; when the machine running the sessions last started
+  var NAMES = null;      // config project_names: folder -> friendly project name
   var LINKS = {};   // session (8 chars) -> {app, web} links, when claude_app_links is on
   // On this computer, open the desktop app; from a phone or another device,
   // open the session's Remote Control page on claude.ai (the app link would
@@ -408,7 +409,7 @@ button { font: inherit; color: inherit; }
 
   function render() {
     var t = now();
-    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT });
+    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES });
     var all = MODEL.sessions;
     // Tile counts follow the project filter, so a number always matches its list.
     var inProject = all.filter(function (s) { return !ui.project || s.project === ui.project; });
@@ -499,6 +500,7 @@ button { font: inherit; color: inherit; }
     if (!s) { closeSheet(); return; }
     var t = now();
     var head = [s.project];
+    if (s.folder && s.folder !== s.project) head.push('folder ' + s.folder);
     if (s.host) head.push(s.host);
     if (s.session) head.push('session ' + s.session);
     if (s.openedAt) head.push('opened ' + M.rel(t - s.openedAt) + ' ago');
@@ -631,6 +633,7 @@ button { font: inherit; color: inherit; }
   fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
     if (cfg && cfg.title) $('brandTitle').textContent = cfg.title;
     if (cfg && typeof cfg.booted_at === 'number') BOOTED_AT = cfg.booted_at * 1000;
+    if (cfg && cfg.project_names) NAMES = cfg.project_names;
     if (cfg && cfg.logo) renderMarks(cfg.logo);
     render();
   }).catch(function () {});
