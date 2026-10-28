@@ -421,6 +421,28 @@ class TestSessionModel(unittest.TestCase):
         ], names=self.NAMES)
         self.assertEqual([(p["name"], p["total"]) for p in out["projects"]], [("Orion", 2)])
 
+    def test_star_in_name_repeats_the_match(self):
+        names = {
+            "Projects/Labs/lab-*": "*",
+            "Projects/Labs/lab-core": "Core",
+            "Projects/Labs": "Labs",
+            "lab-*": "*",
+            "tool-*": "Tool *",
+            "solo": "*",
+        }
+        # A new app under the folder names itself; deeper folders keep it.
+        self.assertEqual(self.named("x", "Projects/Labs/lab-night_owl/repo/src", names)["project"], "Night Owl")
+        self.assertEqual(self.named("x", "Projects/Labs/LAB-Rides", names)["project"], "Rides")   # keeps its case
+        # An exact path still beats the pattern, and a bare prefix falls through.
+        self.assertEqual(self.named("x", "Projects/Labs/lab-core/app", names)["project"], "Core")
+        self.assertEqual(self.named("lab-", "Projects/Labs/lab-", names)["project"], "Labs")
+        self.assertEqual(self.named("misc", "Projects/Labs/misc", names)["project"], "Labs")
+        # Folder patterns do the same for events without a path.
+        self.assertEqual(self.named("lab-rides", names=names)["project"], "Rides")
+        self.assertEqual(self.named("tool-kit", names=names)["project"], "Tool Kit")
+        self.assertEqual(self.named("lab-", names=names)["project"], "lab-")
+        self.assertEqual(self.named("solo", names=names)["project"], "solo")
+
     def test_bad_names_config_is_ignored(self):
         for bad in ("nope", ["x"], {"": "X", "a": "", "b": 3}):
             self.assertEqual(self.named("a", names=bad)["project"], "a")

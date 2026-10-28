@@ -38,8 +38,11 @@
   //   "Projects/Orion": "Orion"   a folder under home and everything inside it
   //   "orion-*": "Orion"          a folder name; * stands for the rest
   //   "src": "Orion"              a folder name exactly
-  // Case does not matter. The longest path wins, then an exact folder name,
-  // then the longest pattern. A session no rule matches keeps its folder name.
+  //   "Projects/Labs/lab-*": "*"  a * in the name repeats what the key's * matched,
+  //                               made readable: lab-night-owl -> "Night Owl"
+  // A path key's * matches within one folder. Case does not matter. The longest
+  // path wins, then an exact folder name, then the longest pattern. A session
+  // no rule matches keeps its folder name.
   function compileNames(map) {
     var rules = { paths: [], exact: {}, globs: [] };
     if (!map || typeof map !== 'object') return rules;
@@ -49,27 +52,59 @@
       name = name.trim().slice(0, 40);
       var key = k.trim().toLowerCase().replace(/^~\//, '').replace(/^\/+|\/+$/g, '');
       if (!key) return;
-      if (key.indexOf('/') >= 0) rules.paths.push({ key: key, name: name });
-      else if (key.slice(-1) === '*') rules.globs.push({ key: key.slice(0, -1), name: name });
+      var wild = key.slice(-1) === '*';
+      if (wild) key = key.slice(0, -1);
+      if (key.indexOf('/') >= 0) rules.paths.push({ key: key, wild: wild, name: name });
+      else if (wild) rules.globs.push({ key: key, name: name });
       else rules.exact[key] = name;
     });
-    rules.paths.sort(function (a, b) { return b.key.length - a.key.length; });
-    rules.globs.sort(function (a, b) { return b.key.length - a.key.length; });
+    function longestFirst(a, b) { return b.key.length - a.key.length; }
+    rules.paths.sort(longestFirst);
+    rules.globs.sort(longestFirst);
     return rules;
+  }
+
+  // "night_owl-app" -> "Night Owl App"
+  function readable(text) {
+    return text.replace(/[-_\s]+/g, ' ').trim().replace(/(^| )(\S)/g, function (m, sp, c) {
+      return sp + c.toUpperCase();
+    }).slice(0, 40);
+  }
+
+  // The rule's name, with any * replaced by what the key's * matched; null when
+  // the name needs a match and there is none.
+  function fill(name, rest) {
+    if (name.indexOf('*') < 0) return name;
+    var r = readable(rest || '');
+    return r ? name.replace(/\*/g, r).slice(0, 40) : null;
   }
 
   // The friendly name for one event's folder, or null when no rule matches.
   function projectName(where, folder, rules) {
-    var w = typeof where === 'string' ? where.toLowerCase() : '';
-    var i;
-    for (i = 0; w && i < rules.paths.length; i++) {
-      var k = rules.paths[i].key;
-      if (w === k || w.indexOf(k + '/') === 0) return rules.paths[i].name;
+    var w = typeof where === 'string' ? where : '';
+    var wl = w.toLowerCase();
+    var i, n;
+    for (i = 0; wl && i < rules.paths.length; i++) {
+      var p = rules.paths[i];
+      if (p.wild) {
+        if (wl.indexOf(p.key) !== 0) continue;
+        n = fill(p.name, w.slice(p.key.length).split('/')[0]);
+        if (n) return n;
+      } else if (wl === p.key || wl.indexOf(p.key + '/') === 0) {
+        n = fill(p.name, '');
+        if (n) return n;
+      }
     }
-    var f = (folder || '').toLowerCase();
-    if (Object.prototype.hasOwnProperty.call(rules.exact, f)) return rules.exact[f];
+    var f = folder || '';
+    var fl = f.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(rules.exact, fl)) {
+      n = fill(rules.exact[fl], '');
+      if (n) return n;
+    }
     for (i = 0; i < rules.globs.length; i++) {
-      if (f.indexOf(rules.globs[i].key) === 0) return rules.globs[i].name;
+      if (fl.indexOf(rules.globs[i].key) !== 0) continue;
+      n = fill(rules.globs[i].name, f.slice(rules.globs[i].key.length));
+      if (n) return n;
     }
     return null;
   }
