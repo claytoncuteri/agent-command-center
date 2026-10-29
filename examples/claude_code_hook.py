@@ -34,6 +34,16 @@ small `custom-title` lines and skipping every other line undecoded. See
 title_from_transcript(). Lines are capped well under 4 KB and written with a
 single O_APPEND write, so lines from parallel sessions never interleave.
 
+Another opt-in exception, off by default: with ACC_SUMMARIES=1 the script also
+keeps the session's own short words about its work: each task-list step's name
+(update_plan items, TodoWrite todos), and from the desktop app's end-of-turn
+wrap_up its recap, its question, whether it is blocked, and its buttons'
+labels. Never a button's message, never any other tool's input. The text is
+scrubbed (emails, URL queries, long numbers, token-shaped strings) and capped,
+then kept in one file per session beside the state, replaced on every change,
+so only the latest turn exists. Files older than 7 days are deleted. Events
+never carry this text. See save_summary().
+
 It prints nothing (hook stdout can be injected into the model's context) and
 always exits 0, so it can never block or steer a session.
 
@@ -59,6 +69,9 @@ Configuration (environment)
                      (matched in memory, never written; opt-in; off by default)
     ACC_READ_TITLES  set to 1 to take session titles from the history file's
                      `custom-title` lines (opt-in; off by default)
+    ACC_SUMMARIES    set to 1 to keep step names and the end-of-turn recap,
+                     question and button labels, scrubbed and capped, in
+                     <state dir>/<session>.summary.json (opt-in; off by default)
 
 Event mapping
 -------------
@@ -455,6 +468,26 @@ def update_steps(steps: Any, tool_name: str, tool_input: Any) -> Optional[list]:
     return steps
 
 
+def update_step_names(tool_name: str, tool_input: Any) -> Optional[list]:
+    """
+    Opt-in (ACC_SUMMARIES=1): the task list's step names after this tool call,
+    or None when the call carries no fresh list (advance, done and start keep
+    the names they had). Only `content` is read: never TodoWrite's activeForm.
+    """
+    if not isinstance(tool_input, dict):
+        return None
+    if tool_name == "TodoWrite":
+        items = tool_input.get("todos")
+    elif _is_app_tool(tool_name, "update_plan"):
+        items = tool_input.get("items")
+    else:
+        return None
+    if not isinstance(items, list) or not items:
+        return None
+    return [scrub(it.get("content") if isinstance(it, dict) else None, STEP_NAME_MAX) or ""
+            for it in items[:SUMMARY_STEPS_MAX]]
+
+
 def current_step(steps: list) -> Optional[int]:
     """1-based number of the step in progress, else of the next pending one."""
     for i, s in enumerate(steps):
@@ -464,6 +497,147 @@ def current_step(steps: list) -> Optional[int]:
         if s == "pending":
             return i + 1
     return None
+
+
+# ── Turn summaries (opt-in) ─────────────────────────────────────────────────────
+#
+# With ACC_SUMMARIES=1, the session's own short words about its work: step
+# names, and the desktop app's end-of-turn recap, question and button labels.
+# Kept in <state dir>/<session>.summary.json, one file per session, replaced
+# whole on every change, so only the latest turn exists; never in the events.
+
+RECAP_MAX = 300
+ASK_MAX = 100
+STEP_NAME_MAX = 60
+SUMMARY_STEPS_MAX = 12
+OPTION_MAX = 24
+OPTIONS_MAX = 2
+SUMMARY_KEEP_DAYS = 7
+_SUMMARY_SUFFIX = ".summary.json"
+_SCRUB_INPUT_MAX = 4000
+
+
+def summaries_on() -> bool:
+    return os.environ.get("ACC_SUMMARIES") == "1"
+
+
+# Common slips, not a guarantee: sessions must still never write secrets.
+_URL_QUERY = re.compile(r"(https?://[^\s?#]+)[?#]\S*")
+_EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
+_LABELLED = re.compile(r"(?i)\b(password|passwd|passphrase|pwd|token|secret|api[_ -]?key)\s*[:=]\s*\S+")
+_PREFIXED = re.compile(
+    r"(?<![A-Za-z0-9])(?:sk-|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[a-z]-|AKIA|ASIA|eyJ)[A-Za-z0-9_\-.+/=]*")
+_NUMBER = re.compile(r"\+?\d[\d ().\-]{8,}\d")
+_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_RUN = re.compile(r"[A-Za-z0-9_\-+/=]{24,}")
+_HEX = re.compile(r"^[0-9a-fA-F]{32,}$")
+
+
+def _char_class(c: str) -> int:
+    return 0 if c.isdigit() else (1 if c.isupper() else 2)
+
+
+def _token_like(run: str) -> bool:
+    """A long run that reads as random (a key, a hash), not words or a path."""
+    chars = [c for c in run if c.isalnum()]
+    if not any(c.isdigit() for c in chars) or not any(c.isalpha() for c in chars):
+        return False
+    if _HEX.match("".join(chars)):
+        return True
+    switches = sum(1 for a, b in zip(chars, chars[1:]) if _char_class(a) != _char_class(b))
+    return switches * 4 >= len(chars)
+
+
+def _number(m: "re.Match") -> str:
+    text = m.group(0)
+    if _DATE.search(text) or sum(c.isdigit() for c in text) < 10:
+        return text
+    return "[number]"
+
+
+def scrub(value: Any, cap: int) -> Optional[str]:
+    """One line of the session's own text, with likely-private bits blanked, capped."""
+    if not isinstance(value, str):
+        return None
+    text = " ".join(value[:_SCRUB_INPUT_MAX].split())
+    text = _URL_QUERY.sub(r"\1", text)
+    text = _EMAIL.sub("[email]", text)
+    text = _LABELLED.sub(lambda m: m.group(1) + ": [secret]", text)
+    text = _PREFIXED.sub("[secret]", text)
+    text = _NUMBER.sub(_number, text)
+    text = _RUN.sub(lambda m: "[secret]" if _token_like(m.group(0)) else m.group(0), text)
+    return text[:cap] or None
+
+
+def _summary_path(session_id: str) -> str:
+    return _state_path(session_id)[: -len(".json")] + _SUMMARY_SUFFIX
+
+
+def load_summary(session_id: str) -> Dict[str, Any]:
+    try:
+        with open(_summary_path(session_id), encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"steps": [], "steps_total": 0, "recap": None, "ask": None, "options": [], "blocked": False}
+
+
+def save_summary(session_id: str, doc: Dict[str, Any]) -> None:
+    """Replace the session's summary file whole (0600), so only the latest turn exists."""
+    doc.update({"v": 1, "session": session_id[:8], "updated": _now_iso()})
+    _ensure_dir(state_dir())
+    path = _summary_path(session_id)
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(doc, f)
+    os.replace(tmp, path)
+
+
+def prune_summaries() -> None:
+    """Delete summary files untouched for SUMMARY_KEEP_DAYS (whether or not summaries are on)."""
+    import time
+    cutoff = time.time() - SUMMARY_KEEP_DAYS * 86400
+    try:
+        names = os.listdir(state_dir())
+    except OSError:
+        return
+    for name in names:
+        if not name.endswith(_SUMMARY_SUFFIX):
+            continue
+        path = os.path.join(state_dir(), name)
+        try:
+            if os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def update_summary(doc: Dict[str, Any], steps: Optional[list], names: Optional[list],
+                   tool_name: str, tool_input: Any) -> bool:
+    """Fold one tool call into the summary. True when the file should be rewritten."""
+    wrap = _is_app_tool(tool_name, "wrap_up")
+    known = [x.get("name", "") for x in doc.get("steps") or [] if isinstance(x, dict)]
+    if names is None and not (wrap or (steps is not None and known)):
+        return False
+    names = names if names is not None else known
+    if steps is not None and names:
+        doc["steps"] = [{"name": n, "status": s} for n, s in zip(names, steps[:SUMMARY_STEPS_MAX])]
+        doc["steps_total"] = len(steps)
+    if wrap:
+        ti = tool_input if isinstance(tool_input, dict) else {}
+        actions = ti.get("actions") if isinstance(ti.get("actions"), list) else []
+        labels = [scrub(a.get("label"), OPTION_MAX) for a in actions if isinstance(a, dict)]
+        doc.update({
+            "recap": scrub(ti.get("recap"), RECAP_MAX),
+            "ask": scrub(ti.get("ask"), ASK_MAX),
+            "options": [x for x in labels if x][:OPTIONS_MAX],
+            "blocked": ti.get("blocked") is True,
+            "turn_at": _now_iso(),
+        })
+    return True
 
 
 # ── Pause requests (opt-in) ─────────────────────────────────────────────────────
@@ -781,6 +955,7 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
             clear_state(session_id)
             state = {}
             emit("Session opened", "idle", title=title)
+        prune_summaries()
 
     elif event == "UserPromptSubmit":
         close_approval(agent, session_id, state, where=where, status="declined", result="not run")
@@ -794,6 +969,12 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
             state["limit"] = limit
         emit("Working", "started", doing="Thinking", pause=pause or None, time_limit=limit)
         set_doing("Thinking")
+        # A new prompt answers the last turn's question; its recap stays.
+        if summaries_on() and os.path.exists(_summary_path(session_id)):
+            doc = load_summary(session_id)
+            if doc.get("ask") or doc.get("options") or doc.get("blocked"):
+                doc.update({"ask": None, "options": [], "blocked": False})
+                save_summary(session_id, doc)
 
     elif event == "PermissionRequest":
         kind = "question" if tool_name == QUESTION_TOOL else "permission"
@@ -839,6 +1020,12 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
                 save_state(session_id, state)
         # A task-list update: report how far along the session is (counts only).
         steps = update_steps(state.get("steps"), tool_name, data.get("tool_input"))
+        # Only the task-list tools and wrap_up touch the summary; skip the read otherwise.
+        if summaries_on() and (steps is not None or _is_app_tool(tool_name, "wrap_up")):
+            doc = load_summary(session_id)
+            names = update_step_names(tool_name, data.get("tool_input"))
+            if update_summary(doc, steps, names, tool_name, data.get("tool_input")):
+                save_summary(session_id, doc)
         if steps is not None and steps != state.get("steps"):
             state["steps"] = steps
             save_state(session_id, state)

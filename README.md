@@ -47,6 +47,8 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
 | `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app. Reads only the `sessionId` and `cliSessionId` fields of the app's per-session records. |
+| `turn_summaries` | `false` | Serve the hook's opt-in turn summaries at `/api/summaries`: each session's step names and its end-of-turn recap, question and button labels. Needs `ACC_SUMMARIES=1` on the hook. See [Turn summaries](#turn-summaries-opt-in). |
+| `summaries_dir` | `null` | Where the hook keeps the summary files. `null` means the `state` folder beside the first event file, which is where the hook writes them by default. |
 | `remote_clients` | `[]` | Tailnet (or LAN) addresses allowed to view the dashboard through a local reverse proxy such as `tailscale serve`. Empty means no remote viewers. See [Viewing from your phone](#viewing-from-your-phone). |
 | `touch_icon` | `null` | Path to a PNG served at `/apple-touch-icon.png`, the icon an iPhone uses for Add to Home Screen. |
 | `project_names` | `{}` | Friendly project names in the session view. See [Project names](#project-names). |
@@ -333,6 +335,15 @@ hooks. To show titles, prefix each hook command with `ACC_READ_TITLES=1 `: the
 script then reads the title from the session's history file, parsing only its
 small `custom-title` lines and skipping every other line undecoded, and only
 for files under `~/.claude/projects`. Without it, rows read "Session <id>".
+
+<a id="turn-summaries-opt-in"></a>
+**Turn summaries (opt-in).** Prefix each hook command with `ACC_SUMMARIES=1 `
+and set `"turn_summaries": true`, and the dashboard can show what a session
+did and what it needs from you, in the session's own words.
+- **What it keeps:** each task-list step's name (the desktop app's plan, or `TodoWrite` in the terminal), and from the desktop app's end-of-turn summary its recap (300 characters), its question (100), whether it is blocked, and its two answer buttons' labels (24 each). Never a button's hidden message, never any other tool's input, never the prompt or a reply.
+- **Scrubbed first:** emails, URL query strings, runs of 10 or more digits, and token-shaped strings (known key prefixes and long random-looking runs) are blanked before anything is written. This catches common slips; it is not a guarantee, so sessions should still never write secrets.
+- **Where it lives:** one `<session>.summary.json` per session in the hook's state folder (0600, folder 0700), replaced whole on every change, so only the latest turn exists. Files untouched for 7 days are deleted when a session starts. Events never carry this text.
+- **Who sees it:** the same viewers as the dashboard (this machine, and `remote_clients`). The terminal has no end-of-turn summary, so terminal sessions show step names only.
 
 **Paused sessions (opt-in).** Prefix each hook command with
 `ACC_DETECT_PAUSE=1 ` too, and a message asking a session to pause ("please

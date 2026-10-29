@@ -64,6 +64,12 @@ _DEFAULTS: dict = {
     # same session in the app ("Open in Claude"). Reads only two id fields from
     # the app's per-session records. Off unless you turn it on.
     "claude_app_links": False,
+    # Serve the hook's opt-in turn summaries (ACC_SUMMARIES=1): each session's
+    # step names and its end-of-turn recap, question and button labels. Off
+    # unless you turn it on. summaries_dir null = the "state" folder beside the
+    # first event file, where the hook keeps them.
+    "turn_summaries": False,
+    "summaries_dir": None,
     # Remote viewing through Tailscale serve (or any local reverse proxy).
     # A request that arrives with proxy headers is "remote" and is allowed only
     # when its X-Forwarded-For is one of these exact addresses. Empty = no
@@ -414,6 +420,96 @@ def api_links() -> JSONResponse:
     if not CONFIG.get("claude_app_links"):
         return JSONResponse(content={})
     return JSONResponse(content=claude_app_links())
+
+
+# ── Turn summaries (opt-in) ─────────────────────────────────────────────────────
+#
+# The hook, with ACC_SUMMARIES=1, keeps one <session>.summary.json per session:
+# step names plus the end-of-turn recap, question and button labels, already
+# scrubbed and capped. This reads them back and re-checks every field (types and
+# caps), so a hand-edited or foreign file can add nothing else. Files older than
+# 7 days are skipped (the hook deletes them).
+
+_SUMMARY_KEEP_SECONDS = 7 * 86400
+_SUMMARY_MAX_BYTES = 64_000
+_SUMMARY_TTL_SECONDS = 5.0
+_STEP_STATES = ("pending", "in_progress", "completed")
+_summaries_cache: dict = {"at": 0.0, "root": None, "data": {}}
+
+
+def summaries_root() -> pathlib.Path:
+    configured = CONFIG.get("summaries_dir")
+    if isinstance(configured, str) and configured.strip():
+        return pathlib.Path(configured).expanduser()
+    return pathlib.Path(CONFIG["event_file"]).expanduser().parent / "state"
+
+
+def _text(value, cap: int) -> Optional[str]:
+    return value[:cap] if isinstance(value, str) and value.strip() else None
+
+
+def _clean_summary(doc: dict) -> dict:
+    steps = []
+    for x in doc.get("steps") if isinstance(doc.get("steps"), list) else []:
+        if isinstance(x, dict) and len(steps) < 12:
+            status = x.get("status") if x.get("status") in _STEP_STATES else "pending"
+            steps.append({"name": _text(x.get("name"), 60) or "", "status": status})
+    total = doc.get("steps_total")
+    options = [o[:24] for o in (doc.get("options") if isinstance(doc.get("options"), list) else [])
+               if isinstance(o, str) and o.strip()][:2]
+    return {
+        "steps": steps,
+        "steps_total": total if isinstance(total, int) and total >= len(steps) else len(steps),
+        "recap": _text(doc.get("recap"), 300),
+        "ask": _text(doc.get("ask"), 100),
+        "options": options,
+        "blocked": doc.get("blocked") is True,
+        "turn_at": _text(doc.get("turn_at"), 40),
+        "updated": _text(doc.get("updated"), 40),
+    }
+
+
+def turn_summaries(root: Optional[pathlib.Path] = None, now: Optional[float] = None) -> dict:
+    """Map the event stream's 8-character session id to its latest turn summary."""
+    root = pathlib.Path(root) if root is not None else summaries_root()
+    now = now if now is not None else datetime.now(timezone.utc).timestamp()
+    out: dict = {}
+    newest: dict = {}
+    try:
+        paths = list(root.glob("*.summary.json"))
+    except OSError:
+        return out
+    for path in paths:
+        try:
+            st = path.stat()
+            if st.st_size > _SUMMARY_MAX_BYTES or now - st.st_mtime > _SUMMARY_KEEP_SECONDS:
+                continue
+            with path.open(encoding="utf-8") as f:
+                doc = json.load(f)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(doc, dict):
+            continue
+        key = doc.get("session")
+        if not (isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_-]{1,8}", key)):
+            continue
+        if key in newest and newest[key] >= st.st_mtime:
+            continue
+        newest[key] = st.st_mtime
+        out[key] = _clean_summary(doc)
+    return out
+
+
+@app.get("/api/summaries")
+def api_summaries() -> JSONResponse:
+    """Session id (8 chars) -> its latest turn summary, when turn_summaries is on."""
+    if not CONFIG.get("turn_summaries"):
+        return JSONResponse(content={})
+    now = datetime.now(timezone.utc).timestamp()
+    root = str(summaries_root())
+    if _summaries_cache["root"] != root or now - _summaries_cache["at"] >= _SUMMARY_TTL_SECONDS:
+        _summaries_cache.update({"at": now, "root": root, "data": turn_summaries(pathlib.Path(root), now)})
+    return JSONResponse(content=_summaries_cache["data"])
 
 
 # ── Reviewable content (reference mode) ──────────────────────────────────────

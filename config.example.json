@@ -43,6 +43,9 @@
 
   "_claude_app_links_comment": "macOS + Claude desktop app: add 'Open in Claude' to sessions waiting on you, opening that session in the app. Reads only two id fields (sessionId, cliSessionId) from the app's per-session records under ~/Library/Application Support/Claude/claude-code-sessions. The app's record format is not a public API and may change; if it does, the buttons simply disappear.",
   "claude_app_links": false,
+  "_turn_summaries_comment": "Serve the hook's opt-in turn summaries (run the hook with ACC_SUMMARIES=1): each session's step names and its end-of-turn recap, question and button labels, scrubbed and capped, latest turn only, deleted after 7 days. summaries_dir null = the state folder beside the first event file.",
+  "turn_summaries": false,
+  "summaries_dir": null,
 
   "_remote_clients_comment": "Addresses allowed to view through a local reverse proxy such as 'tailscale serve' (tailnet only). Empty = no remote viewers. Keep bind at 127.0.0.1 and start with 'python server.py'. Example: [\"100.64.0.10\", \"fd7a:115c:a1e0::10\"].",
   "remote_clients": [],
@@ -50,6 +53,6 @@
   "_touch_icon_comment": "Optional PNG for the iPhone home-screen icon, served at /apple-touch-icon.png.",
   "touch_icon": null,
 
-  "_project_names_comment": "Friendly project names in the session view. A key with a slash is a folder under home and everything inside it; otherwise a folder name, with * standing for the rest. A * in the name repeats what the key's * matched ("Projects/Labs/lab-*": "*" names lab-night_owl "Night Owl"). The longest path wins, then an exact name, then the longest pattern.",
+  "_project_names_comment": "Friendly project names in the session view. A key with a slash is a folder under home and everything inside it; otherwise a folder name, with * standing for the rest. A * in the name repeats what the key's * matched ('Projects/Labs/lab-*': '*' names lab-night_owl 'Night Owl'). The longest path wins, then an exact name, then the longest pattern.",
   "project_names": {}
 }

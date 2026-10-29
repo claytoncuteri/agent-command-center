@@ -159,10 +159,13 @@
 
   // opts.bootedAt (ms): when the machine running the sessions last started, if known.
   // opts.names: the config's project_names (see compileNames).
+  // opts.summaries: /api/summaries, session id (8 chars) -> its latest turn summary.
   function deriveSessions(events, now, opts) {
     now = typeof now === 'number' ? now : Date.now();
     var bootedAt = opts && typeof opts.bootedAt === 'number' ? opts.bootedAt : null;
     var rules = compileNames(opts && opts.names);
+    var summaries = opts && opts.summaries && typeof opts.summaries === 'object' && !Array.isArray(opts.summaries)
+      ? opts.summaries : {};
     var groups = {};
     (events || []).forEach(function (e) {
       if (!e || !e.agent) return;
@@ -180,7 +183,8 @@
         state: null, since: null, ask: null, doing: null, note: null,
         turnStartedAt: null, lastTurnMs: null, lastAt: null, openedAt: null,
         lastAction: null, lastStatus: null, bars: [], events: [], steps: null,
-        pauseRequested: false, turnFinished: false, limitMs: null, limitStart: null, limitResult: null
+        pauseRequested: false, turnFinished: false, limitMs: null, limitStart: null, limitResult: null,
+        summary: null
       };
       var open = {};      // approval_id -> {e, t}
       var lastState = null;
@@ -333,6 +337,10 @@
       return b.lastAt - a.lastAt;                                                 // most recent first
     });
 
+    sessions.forEach(function (s) {
+      if (s.session && Object.prototype.hasOwnProperty.call(summaries, s.session)) s.summary = cleanSummary(summaries[s.session]);
+    });
+
     var counts = { need: 0, work: 0, turn: 0, paused: 0, idle: 0, closed: 0 };
     var projects = {};
     sessions.forEach(function (s) {
@@ -427,8 +435,27 @@
     return (e.action || e.status || '') + (e.result && e.result !== 'not run' ? ' (' + e.result + ')' : '');
   }
 
+  // A turn summary as the server sends it, re-checked: anything else is dropped.
+  function cleanSummary(x) {
+    if (!x || typeof x !== 'object' || Array.isArray(x)) return null;
+    var str = function (v) { return typeof v === 'string' && v.trim() ? v : null; };
+    var steps = Array.isArray(x.steps) ? x.steps.filter(function (st) { return st && typeof st === 'object'; })
+      .map(function (st) {
+        var ok = st.status === 'completed' || st.status === 'in_progress';
+        return { name: str(st.name) || '', status: ok ? st.status : 'pending' };
+      }) : [];
+    return {
+      steps: steps,
+      stepsTotal: typeof x.steps_total === 'number' ? x.steps_total : steps.length,
+      recap: str(x.recap), ask: str(x.ask),
+      options: Array.isArray(x.options) ? x.options.filter(function (o) { return str(o); }) : [],
+      blocked: x.blocked === true,
+      turnAt: str(x.turn_at) ? Date.parse(x.turn_at) || null : null
+    };
+  }
+
   return {
-    deriveSessions: deriveSessions, describe: describe, projectName: projectName, compileNames: compileNames, eventLine: eventLine,
+    deriveSessions: deriveSessions, cleanSummary: cleanSummary, describe: describe, projectName: projectName, compileNames: compileNames, eventLine: eventLine,
     rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel, limitLabel: limitLabel,
     QUIET_AFTER: QUIET_AFTER, IDLE_AFTER: IDLE_AFTER
   };
