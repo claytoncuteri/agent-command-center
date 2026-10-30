@@ -354,6 +354,260 @@ class TestStepProgress(HookCase):
         self.assertEqual(hook.update_steps(["in_progress"], PLAN, {"start": 9}), ["in_progress"])
 
 
+WRAP = "mcp__ccd_turn__wrap_up"
+
+
+class TestTurnSummaries(HookCase):
+    """Opt-in (ACC_SUMMARIES=1): step names and the wrap-up text, scrubbed and capped."""
+
+    def on(self):
+        p = mock.patch.dict(os.environ, {"ACC_SUMMARIES": "1"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def plan(self, *pairs):
+        return {"items": [{"content": n, "status": s} for n, s in pairs], "scope": "x"}
+
+    def summary(self, session_id="sess-0001-abcdef"):
+        path = hook._summary_path(session_id)
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def everything(self):
+        """Every byte the hook left on disk, for the privacy checks."""
+        out = []
+        for base, _, files in os.walk(self.tmp.name):
+            for name in files:
+                with open(os.path.join(base, name), encoding="utf-8", errors="replace") as f:
+                    out.append(f.read())
+        return "\n".join(out)
+
+    def test_off_by_default_nothing_is_kept(self):
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.plan((SENTINEL, "in_progress")))
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": SENTINEL, "ask": SENTINEL,
+                                                                  "actions": [{"label": SENTINEL}]})
+        self.assertIsNone(self.summary())
+        self.assertNotIn(SENTINEL, self.everything())
+
+    def test_step_names_kept_in_summary_not_events(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=PLAN,
+                      tool_input=self.plan(("Read the runbook", "in_progress"), ("Write the order", "pending")))
+        s = self.summary()
+        self.assertEqual(s["session"], "sess-000")
+        self.assertEqual(s["steps"], [{"name": "Read the runbook", "status": "in_progress"},
+                                      {"name": "Write the order", "status": "pending"}])
+        self.assertEqual(s["steps_total"], 2)
+        self.assertNotIn("Read the runbook", self.raw())
+
+    def test_advance_keeps_names_and_moves_status(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.plan(("A", "in_progress"), ("B", "pending")))
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"advance": True})
+        self.assertEqual([x["status"] for x in self.summary()["steps"]], ["completed", "in_progress"])
+        self.assertEqual([x["name"] for x in self.summary()["steps"]], ["A", "B"])
+
+    def test_wrap_up_keeps_recap_ask_and_labels_only(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input=self.plan(("A", "in_progress")))
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={
+            "recap": "PR 12 is merged as ae31f69. 162 tests pass.",
+            "ask": "Merge PR 13?",
+            "blocked": True,
+            "actions": [{"label": "Merge", "message": SENTINEL}, {"label": "Not yet", "action": SENTINEL}],
+            "extra": SENTINEL,
+        })
+        s = self.summary()
+        self.assertEqual(s["recap"], "PR 12 is merged as ae31f69. 162 tests pass.")
+        self.assertEqual(s["ask"], "Merge PR 13?")
+        self.assertEqual(s["options"], ["Merge", "Not yet"])
+        self.assertIs(s["blocked"], True)
+        self.assertEqual([x["status"] for x in s["steps"]], ["completed"])
+        self.assertIn("turn_at", s)
+        self.assertNotIn(SENTINEL, self.everything())
+
+    def test_wrap_up_without_ask_clears_old_ask(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "one", "ask": "Go?", "actions": [{"label": "Go"}]})
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "two"})
+        s = self.summary()
+        self.assertEqual((s["recap"], s["ask"], s["options"], s["blocked"]), ("two", None, [], False))
+
+    def test_new_prompt_clears_the_ask_but_keeps_the_recap(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "done", "ask": "Go?",
+                                                                  "blocked": True, "actions": [{"label": "Go"}]})
+        self.run_hook("UserPromptSubmit", prompt=SENTINEL)
+        s = self.summary()
+        self.assertEqual((s["recap"], s["ask"], s["options"], s["blocked"]), ("done", None, [], False))
+        self.assertNotIn(SENTINEL, self.everything())
+
+    def test_caps(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=PLAN,
+                      tool_input=self.plan(*[("s" * 200, "pending")] * 20))
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={
+            "recap": "word " * 300, "ask": "q " * 100,
+            "actions": [{"label": "L" * 50}] * 5})
+        s = self.summary()
+        self.assertEqual(len(s["steps"]), hook.SUMMARY_STEPS_MAX)
+        self.assertEqual(s["steps_total"], 20)
+        self.assertTrue(all(len(x["name"]) <= hook.STEP_NAME_MAX for x in s["steps"]))
+        self.assertLessEqual(len(s["recap"]), hook.RECAP_MAX)
+        self.assertLessEqual(len(s["ask"]), hook.ASK_MAX)
+        self.assertEqual(len(s["options"]), hook.OPTIONS_MAX)
+        self.assertTrue(all(len(o) <= hook.OPTION_MAX for o in s["options"]))
+
+    def test_bad_shapes_are_ignored(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={
+            "recap": ["not text"], "ask": 7, "actions": "x", "blocked": "yes"})
+        s = self.summary()
+        self.assertEqual((s["recap"], s["ask"], s["options"], s["blocked"]), (None, None, [], False))
+        self.run_hook("PostToolUse", tool_name=PLAN, tool_input={"items": [{"content": 5, "status": "pending"}, "x"]})
+        self.assertEqual([x["name"] for x in self.summary()["steps"]], ["", ""])
+
+    def test_terminal_todowrite_names_use_content_not_active_form(self):
+        self.on()
+        todos = {"todos": [{"content": "Fix the login", "activeForm": SENTINEL, "status": "in_progress"}]}
+        self.run_hook("PostToolUse", tool_name="TodoWrite", tool_input=todos)
+        self.assertEqual(self.summary()["steps"], [{"name": "Fix the login", "status": "in_progress"}])
+        self.assertNotIn(SENTINEL, self.everything())
+
+    def test_summary_kept_after_session_end(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "done"})
+        self.run_hook("SessionEnd", reason="other")
+        self.assertEqual(self.summary()["recap"], "done")
+
+    def test_old_summaries_pruned_at_session_start(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "old"}, session_id="old-session-1")
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "new"}, session_id="new-session-1")
+        old = hook._summary_path("old-session-1")
+        stale = os.path.getmtime(old) - (hook.SUMMARY_KEEP_DAYS * 86400 + 60)
+        os.utime(old, (stale, stale))
+        self.run_hook("SessionStart", source="startup", session_id="third-session")
+        self.assertFalse(os.path.exists(old))
+        self.assertTrue(os.path.exists(hook._summary_path("new-session-1")))
+
+    def test_prune_leaves_other_files_alone(self):
+        self.on()
+        os.makedirs(hook.state_dir(), exist_ok=True)
+        other = os.path.join(hook.state_dir(), "keep-me.json")
+        with open(other, "w") as f:
+            f.write("{}")
+        os.utime(other, (1, 1))
+        self.run_hook("SessionStart", source="startup")
+        self.assertTrue(os.path.exists(other))
+
+    def test_file_is_private_and_written_whole(self):
+        self.on()
+        self.run_hook("PostToolUse", tool_name=WRAP, tool_input={"recap": "done"})
+        path = hook._summary_path("sess-0001-abcdef")
+        self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        self.assertFalse(any(n.endswith(".tmp") for n in os.listdir(hook.state_dir())))
+
+    def test_other_tools_never_reach_the_summary(self):
+        self.on()
+        poison = {"prompt": SENTINEL, "tool_input": {"command": SENTINEL, "recap": SENTINEL, "items": [
+            {"content": SENTINEL, "status": "pending"}]}, "tool_response": {"stdout": SENTINEL},
+            "last_assistant_message": SENTINEL, "message": SENTINEL}
+        for ev, extra in (("SessionStart", {"source": "startup"}), ("UserPromptSubmit", {}),
+                          ("PreToolUse", {"tool_name": "Bash"}), ("PostToolUse", {"tool_name": "Bash"}),
+                          ("PostToolUse", {"tool_name": "mcp__other__wrap_up"}),
+                          ("PostToolUse", {"tool_name": "mcp__other__update_plan"}),
+                          ("Stop", {}), ("SessionEnd", {})):
+            self.run_hook(ev, **extra, **poison)
+        self.assertNotIn(SENTINEL, self.everything())
+
+
+class TestScrub(unittest.TestCase):
+    def s(self, text, cap=300):
+        return hook.scrub(text, cap)
+
+    def test_keeps_ordinary_text(self):
+        for text in ("PR 12 is merged as ae31f69; 1075 tests in 25 modules pass.",
+                     "Wrote plans/watchtower-white-house-plan.md and docs/verification/mail-nas-backup.md",
+                     "Deployed on 2026-10-28 at 15:46, rollback target 1432a79.",
+                     "Watchtower-white-house-plan-and-dossier-view is ready"):
+            self.assertEqual(self.s(text), text)
+
+    def test_one_line_and_capped(self):
+        self.assertEqual(self.s("a\n\n b\t c"), "a b c")
+        self.assertEqual(len(self.s("x " * 500, 50)), 50)
+        self.assertIsNone(self.s("   "))
+        self.assertIsNone(self.s(None))
+
+    def test_emails(self):
+        self.assertEqual(self.s("Wrote to jane.doe+x@example.org today"), "Wrote to [email] today")
+
+    def test_url_queries_dropped(self):
+        self.assertEqual(self.s("See https://example.org/a/b?token=abc&x=1#frag now"),
+                         "See https://example.org/a/b now")
+
+    def test_url_credentials_dropped(self):
+        # Hosts without a dot never looked like an email, so the password stayed.
+        self.assertEqual(self.s("clone https://user:pass@localhost:8080/repo.git done"),
+                         "clone https://[secret]@localhost:8080/repo.git done")
+        self.assertEqual(self.s("DATABASE_URL is postgres://app:s3cret@db:5432/app"),
+                         "DATABASE_URL is postgres://[secret]@db:5432/app")
+        self.assertEqual(self.s("push to https://ghp_abcdef123456@example.org/o/r.git"),
+                         "push to https://[secret]@example.org/o/r.git")
+        self.assertEqual(self.s("see https://example.org/npm/@scope/pkg"), "see https://example.org/npm/@scope/pkg")
+
+    def test_long_numbers(self):
+        self.assertEqual(self.s("Call +1 (415) 555-0172 or 4111 1111 1111 1111"),
+                         "Call [number] or [number]")
+
+    def test_long_numbers_beside_dates_and_addresses(self):
+        # A date in the run used to excuse everything beside it; an IP address is not a long number.
+        self.assertEqual(self.s("Paid 2026-10-28 4111 1111 1111 1111 ok"), "Paid [number] ok")
+        for text in ("Mini at 100.101.72.120, deployed 2026-10-28 15:46", "NAS 10.0.0.253 and 100.115.85.38 reachable"):
+            self.assertEqual(self.s(text), text)
+        self.assertEqual(self.s("fax 415.555.0172.0 ok"), "fax [number] ok")
+
+    def test_prefixed_tokens(self):
+        for tok in ("sk-ant-api03-abcDEF123", "ghp_abcdefghijklmnop123456", "github_pat_11ABCDEFG",
+                    "xoxb-1234-abcd", "AKIAABCDEFGHIJKLMNOP", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"):
+            self.assertEqual(self.s("key " + tok + " end"), "key [secret] end", tok)
+
+    def test_more_known_prefixes_and_the_telegram_shape(self):
+        # Built from parts: a whole token-shaped literal in this file trips
+        # GitHub's push protection, which does not know a test fixture from a leak.
+        tail = "abcDEF123ghiJKL456mn"
+        for tok in ("sk_live_" + tail, "rk_test_" + tail[:9], "whsec_" + tail[:9], "glpat-" + tail,
+                    "AIzaSyD-" + tail + "-a7eZSW0jkFMBWY", "xapp-1-A0B1C2D3E4-567-abc", "ASIA" + "JEXAMPLEEXAMPLE0",
+                    "123456789:AAH" + tail + "SeofSAs0K5PALDsaw"):
+            self.assertEqual(self.s("key " + tok + " end"), "key [secret] end", tok)
+
+    def test_prefixes_are_not_words(self):
+        # An AWS key id is exactly AKIA or ASIA plus 16 characters; Slack tokens are xox[a-eprs]-.
+        for text in ("Deployed to ASIA and EU regions", "AKIA is a prefix", "xoxo- love", "a tasks-list"):
+            self.assertEqual(self.s(text), text)
+
+    def test_random_looking_runs(self):
+        self.assertEqual(self.s("token Zx9kQ2mV7pL4rT8wN3bY6cJ1 end"), "token [secret] end")
+        self.assertEqual(self.s("sha 3f786850e387550fdab836ed7e6dc881de23001b"), "sha [secret]")
+        self.assertEqual(self.s("aws wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY ok"), "aws [secret] ok")
+
+    def test_labelled_secrets(self):
+        self.assertEqual(self.s("password: hunter2 and api_key=abc"), "password: [secret] and api_key: [secret]")
+
+    def test_labelled_secrets_in_env_names_and_quotes(self):
+        # A word boundary never fell after "_", so DB_PASSWORD=... was kept whole.
+        self.assertEqual(self.s("set DB_PASSWORD=hunter2 and SECRET_KEY=abc"),
+                         "set DB_PASSWORD: [secret] and SECRET_KEY: [secret]")
+        self.assertEqual(self.s("PRIVATE_KEY=abc AWS_SECRET_ACCESS_KEY=short csrf_token=x"),
+                         "PRIVATE_KEY: [secret] AWS_SECRET_ACCESS_KEY: [secret] csrf_token: [secret]")
+        self.assertEqual(self.s("\"password\": \"hunter2\", 'api_key': 'abc'"),
+                         "\"password: [secret] 'api_key: [secret]")
+        for text in ("max_tokens=4096 and tokens: 25132", "the token count: 25,132", "a secret-free recap"):
+            self.assertEqual(self.s(text), text)
+
+
 class TestPauseRequests(HookCase):
     """Opt-in: a prompt asking the session to pause sets a flag, never writes text."""
 

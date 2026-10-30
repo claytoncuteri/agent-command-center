@@ -25,6 +25,7 @@ const now = Date.parse(input.now);
 const opts = {};
 if (input.bootedAt) opts.bootedAt = Date.parse(input.bootedAt);
 if (input.names) opts.names = input.names;
+if (input.summaries) opts.summaries = input.summaries;
 const out = m.deriveSessions(input.events, now, opts);
 out.sessions.forEach(s => { s.line = m.describe(s, now); s.timeline = s.events.map(m.eventLine); delete s.events; });
 process.stdout.write(JSON.stringify(out));
@@ -47,10 +48,11 @@ def ev(minutes_ago, status, action, session="s1", agent="Demo", **extra):
 
 @unittest.skipIf(NODE is None, "node is not installed")
 class TestSessionModel(unittest.TestCase):
-    def derive(self, events, booted_at=None, names=None):
+    def derive(self, events, booted_at=None, names=None, summaries=None):
         proc = subprocess.run(
             [NODE, "-e", HARNESS, str(MODEL)],
-            input=json.dumps({"now": NOW, "events": events, "bootedAt": booted_at, "names": names}),
+            input=json.dumps({"now": NOW, "events": events, "bootedAt": booted_at, "names": names,
+                              "summaries": summaries}),
             capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -446,6 +448,30 @@ class TestSessionModel(unittest.TestCase):
     def test_bad_names_config_is_ignored(self):
         for bad in ("nope", ["x"], {"": "X", "a": "", "b": 3}):
             self.assertEqual(self.named("a", names=bad)["project"], "a")
+
+    def test_turn_summary_attached_by_session(self):
+        good = {"steps": [{"name": "Read", "status": "completed"}, {"name": "Write", "status": "in_progress"}],
+                "steps_total": 2, "recap": "Done.", "ask": "Go?", "options": ["Go", "Wait"], "blocked": True,
+                "turn_at": "2026-10-29T12:00:00.000Z", "updated": "2026-10-29T12:00:00.000Z"}
+        out = self.derive([ev(5, "finished", "Your turn", session="abcd1234"),
+                           ev(5, "finished", "Your turn", session="other000", agent="Other")],
+                          summaries={"abcd1234": good, "zzzz0000": good})
+        by = {s["session"]: s for s in out["sessions"]}
+        s = by["abcd1234"]["summary"]
+        self.assertEqual((s["recap"], s["ask"], s["options"], s["blocked"]), ("Done.", "Go?", ["Go", "Wait"], True))
+        self.assertEqual([x["name"] for x in s["steps"]], ["Read", "Write"])
+        self.assertIsNone(by["other000"]["summary"])
+
+    def test_bad_summaries_are_ignored(self):
+        odd = self.derive([ev(5, "finished", "Your turn", session="abcd1234")],
+                          summaries={"abcd1234": {"steps": [{"name": "A", "status": "weird"}, 3]}})["sessions"][0]
+        self.assertEqual(odd["summary"]["steps"], [{"name": "A", "status": "pending"}])
+        for bad in ("x", ["x"], {"abcd1234": "x"}, {"abcd1234": {"recap": 5, "steps": "x", "options": "y"}}):
+            s = self.derive([ev(5, "finished", "Your turn", session="abcd1234")], summaries=bad)["sessions"][0]
+            if isinstance(bad, dict) and isinstance(bad.get("abcd1234"), dict):
+                self.assertEqual((s["summary"]["recap"], s["summary"]["steps"], s["summary"]["options"]), (None, [], []))
+            else:
+                self.assertIsNone(s["summary"])
 
 
 if __name__ == "__main__":

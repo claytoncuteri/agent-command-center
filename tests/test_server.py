@@ -294,7 +294,8 @@ class TestRealAppThroughGate(unittest.TestCase):
         mini = [(b"host", b"dash.example-tailnet.ts.net"), (b"x-forwarded-for", b"100.64.0.20"),
                 (b"tailscale-user-login", b"me@example.org")]
         for path in ("/", "/sessions", "/classic", "/static/sessions.html", "/static/sessions.js",
-                     "/apple-touch-icon.png", "/api/config", "/api/events", "/api/links", "/api/content?ref=x"):
+                     "/apple-touch-icon.png", "/api/config", "/api/events", "/api/links", "/api/summaries",
+                     "/api/content?ref=x"):
             for method in ("GET", "HEAD"):
                 self.assertEqual(self.call(path, mini, method), 403, (method, path))
 
@@ -305,6 +306,7 @@ class TestRealAppThroughGate(unittest.TestCase):
             self.assertEqual(self.call("/static/sessions.js", hdrs), 200)
             self.assertEqual(self.call("/", hdrs), 200)
             self.assertEqual(self.call("/api/config", hdrs), 200)
+            self.assertEqual(self.call("/api/summaries", hdrs), 200)
 
 
 class TestTouchIcon(unittest.TestCase):
@@ -360,6 +362,108 @@ class TestProjectNames(unittest.TestCase):
         for value in (None, ["x"], "x"):
             with mock.patch.dict(server.CONFIG, {"project_names": value}):
                 self.assertEqual(json.loads(server.api_config().body)["project_names"], {})
+
+
+class TestExampleConfig(unittest.TestCase):
+    def test_example_config_is_valid_json_with_known_keys(self):
+        with open(ROOT / "config.example.json", encoding="utf-8") as f:
+            cfg = json.load(f)
+        unknown = [k for k in cfg if not k.startswith("_") and k not in server._DEFAULTS]
+        self.assertEqual(unknown, [])
+
+
+class TestTurnSummaries(unittest.TestCase):
+    """The hook's opt-in summary files, read back with every field re-checked."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = pathlib.Path(self.tmp.name)
+        self.now = 2_000_000_000.0
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def put(self, name, body, age=0.0):
+        path = self.dir / name
+        path.write_text(body if isinstance(body, str) else json.dumps(body), encoding="utf-8")
+        os.utime(path, (self.now - age, self.now - age))
+        return path
+
+    def good(self, session="abcd1234", **kw):
+        body = {"v": 1, "session": session, "updated": "2026-10-29T12:00:00.000Z",
+                "turn_at": "2026-10-29T12:00:00.000Z", "steps": [{"name": "Read", "status": "completed"}],
+                "steps_total": 1, "recap": "Done.", "ask": "Go?", "options": ["Go", "Wait"], "blocked": True}
+        body.update(kw)
+        return body
+
+    def read(self):
+        return server.turn_summaries(self.dir, now=self.now)
+
+    def test_reads_fresh_files_by_session(self):
+        self.put("abcd1234-long-id.summary.json", self.good())
+        out = self.read()
+        self.assertEqual(list(out), ["abcd1234"])
+        self.assertEqual(out["abcd1234"]["recap"], "Done.")
+        self.assertEqual(out["abcd1234"]["options"], ["Go", "Wait"])
+        self.assertIs(out["abcd1234"]["blocked"], True)
+
+    def test_skips_old_big_bad_and_foreign_files(self):
+        self.put("old.summary.json", self.good("old00000"), age=8 * 86400)
+        self.put("big.summary.json", json.dumps(self.good("big00000")) + " " * 70_000)
+        self.put("bad.summary.json", "{not json")
+        self.put("list.summary.json", "[1, 2]")
+        self.put("nosession.summary.json", self.good(session=None))
+        self.put("abcd1234.json", self.good("state000"))
+        self.assertEqual(self.read(), {})
+
+    def test_fields_rechecked_and_capped(self):
+        self.put("x.summary.json", self.good(
+            recap="r" * 900, ask=["no"], options=["o" * 90, 3, "b", "c"], blocked="yes",
+            steps=[{"name": "n" * 300, "status": "weird"}, "junk"] * 30, steps_total="many", extra="dropped"))
+        s = self.read()["abcd1234"]
+        self.assertEqual(len(s["recap"]), 300)
+        self.assertIsNone(s["ask"])
+        self.assertEqual(s["options"], ["o" * 24, "b"])
+        self.assertIs(s["blocked"], False)
+        self.assertEqual(len(s["steps"]), 12)
+        self.assertEqual(s["steps"][0], {"name": "n" * 60, "status": "pending"})
+        self.assertEqual(s["steps_total"], 12)
+        self.assertNotIn("extra", s)
+
+    def test_timestamps_totals_and_deep_files_rechecked(self):
+        self.put("x.summary.json", self.good(turn_at="not a time", updated="<b>x</b>", steps_total=True))
+        self.put("y.summary.json", self.good("deep0000", steps_total=10 ** 12))
+        self.put("z.summary.json", "[" * 60_000)  # json.load raises RecursionError, not ValueError
+        out = self.read()
+        self.assertEqual(sorted(out), ["abcd1234", "deep0000"])
+        s = out["abcd1234"]
+        self.assertEqual((s["turn_at"], s["updated"], s["steps_total"]), (None, None, 1))
+        self.assertEqual(out["deep0000"]["steps_total"], 1)
+        self.assertEqual(out["deep0000"]["turn_at"], "2026-10-29T12:00:00.000Z")
+
+    def test_newest_file_wins_for_one_session(self):
+        self.put("a.summary.json", self.good(recap="older"), age=100)
+        self.put("b.summary.json", self.good(recap="newer"), age=10)
+        self.assertEqual(self.read()["abcd1234"]["recap"], "newer")
+
+    def test_missing_dir_is_empty(self):
+        self.assertEqual(server.turn_summaries(self.dir / "nope", now=self.now), {})
+
+    def test_endpoint_off_by_default(self):
+        self.put("abcd1234.summary.json", self.good())
+        with mock.patch.dict(server.CONFIG, {"turn_summaries": False, "summaries_dir": str(self.dir)}):
+            self.assertEqual(json.loads(server.api_summaries().body), {})
+
+    def test_endpoint_on(self):
+        self.put("abcd1234.summary.json", self.good())
+        with mock.patch.dict(server.CONFIG, {"turn_summaries": True, "summaries_dir": str(self.dir)}), \
+                mock.patch.object(server, "_summaries_cache", {"at": 0.0, "root": None, "data": {}}):
+            body = json.loads(server.api_summaries().body)
+        self.assertEqual(body["abcd1234"]["ask"], "Go?")
+
+    def test_default_dir_is_state_next_to_first_event_file(self):
+        with mock.patch.dict(server.CONFIG, {"summaries_dir": None, "event_file": "/tmp/acc/events.jsonl"}):
+            self.assertEqual(server.summaries_root(), pathlib.Path("/tmp/acc/state"))
 
 
 class TestClaudeAppLinks(unittest.TestCase):
