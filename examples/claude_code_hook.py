@@ -39,10 +39,10 @@ keeps the session's own short words about its work: each task-list step's name
 (update_plan items, TodoWrite todos), and from the desktop app's end-of-turn
 wrap_up its recap, its question, whether it is blocked, and its buttons'
 labels. Never a button's message, never any other tool's input. The text is
-scrubbed (emails, URL queries, long numbers, token-shaped strings) and capped,
-then kept in one file per session beside the state, replaced on every change,
-so only the latest turn exists. Files older than 7 days are deleted. Events
-never carry this text. See save_summary().
+scrubbed (emails, URL passwords and queries, labelled values, long numbers,
+token-shaped strings) and capped, then kept in one file per session beside
+the state, replaced on every change, so only the latest turn exists. Files
+older than 7 days are deleted. Events never carry this text. See save_summary().
 
 It prints nothing (hook stdout can be injected into the model's context) and
 always exits 0, so it can never block or steer a session.
@@ -522,13 +522,20 @@ def summaries_on() -> bool:
 
 
 # Common slips, not a guarantee: sessions must still never write secrets.
+_URL_USER = re.compile(r"([A-Za-z][A-Za-z0-9+.-]*://)[^\s/@]+@")  # user:pass@ in any URL
 _URL_QUERY = re.compile(r"(https?://[^\s?#]+)[?#]\S*")
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
-_LABELLED = re.compile(r"(?i)\b(password|passwd|passphrase|pwd|token|secret|api[_ -]?key)\s*[:=]\s*\S+")
+_LABELLED = re.compile(
+    r"(?i)(?<![A-Za-z0-9])(password|passwd|passphrase|pwd|token|secret(?:[_ -]?access)?(?:[_ -]?key)?"
+    r"|private[_ -]?key|api[_ -]?key)[\"']?\s*[:=]\s*\S+")
 _PREFIXED = re.compile(
-    r"(?<![A-Za-z0-9])(?:sk-|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|xox[a-z]-|AKIA|ASIA|eyJ)[A-Za-z0-9_\-.+/=]*")
+    r"(?<![A-Za-z0-9])(?:sk-|[sr]k_(?:live|test)_|whsec_|ghp_|gho_|ghs_|ghu_|ghr_|github_pat_|glpat-"
+    r"|xox[a-eprs]-|xapp-|AIza|eyJ)[A-Za-z0-9_\-.+/=]*"
+    r"|(?<![A-Za-z0-9])(?:AKIA|ASIA)[A-Z0-9]{16}(?![A-Za-z0-9])"   # an AWS key id is exactly 20 characters
+    r"|(?<![A-Za-z0-9])\d{8,10}:[A-Za-z0-9_-]{30,}")               # a Telegram bot token
 _NUMBER = re.compile(r"\+?\d[\d ().\-]{8,}\d")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_IPV4 = re.compile(r"(?<!\d)\d{1,3}(?:\.\d{1,3}){3}(?!\d)")
 _RUN = re.compile(r"[A-Za-z0-9_\-+/=]{24,}")
 _HEX = re.compile(r"^[0-9a-fA-F]{32,}$")
 
@@ -549,8 +556,10 @@ def _token_like(run: str) -> bool:
 
 
 def _number(m: "re.Match") -> str:
+    """Blank a run with 10 or more digits, not counting dates and IP addresses in it."""
     text = m.group(0)
-    if _DATE.search(text) or sum(c.isdigit() for c in text) < 10:
+    rest = _IPV4.sub("", _DATE.sub("", text))
+    if sum(c.isdigit() for c in rest) < 10:
         return text
     return "[number]"
 
@@ -560,6 +569,7 @@ def scrub(value: Any, cap: int) -> Optional[str]:
     if not isinstance(value, str):
         return None
     text = " ".join(value[:_SCRUB_INPUT_MAX].split())
+    text = _URL_USER.sub(r"\1[secret]@", text)
     text = _URL_QUERY.sub(r"\1", text)
     text = _EMAIL.sub("[email]", text)
     text = _LABELLED.sub(lambda m: m.group(1) + ": [secret]", text)

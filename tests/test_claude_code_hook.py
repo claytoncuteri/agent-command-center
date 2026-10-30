@@ -548,14 +548,45 @@ class TestScrub(unittest.TestCase):
         self.assertEqual(self.s("See https://example.org/a/b?token=abc&x=1#frag now"),
                          "See https://example.org/a/b now")
 
+    def test_url_credentials_dropped(self):
+        # Hosts without a dot never looked like an email, so the password stayed.
+        self.assertEqual(self.s("clone https://user:pass@localhost:8080/repo.git done"),
+                         "clone https://[secret]@localhost:8080/repo.git done")
+        self.assertEqual(self.s("DATABASE_URL is postgres://app:s3cret@db:5432/app"),
+                         "DATABASE_URL is postgres://[secret]@db:5432/app")
+        self.assertEqual(self.s("push to https://ghp_abcdef123456@example.org/o/r.git"),
+                         "push to https://[secret]@example.org/o/r.git")
+        self.assertEqual(self.s("see https://example.org/npm/@scope/pkg"), "see https://example.org/npm/@scope/pkg")
+
     def test_long_numbers(self):
         self.assertEqual(self.s("Call +1 (415) 555-0172 or 4111 1111 1111 1111"),
                          "Call [number] or [number]")
+
+    def test_long_numbers_beside_dates_and_addresses(self):
+        # A date in the run used to excuse everything beside it; an IP address is not a long number.
+        self.assertEqual(self.s("Paid 2026-10-28 4111 1111 1111 1111 ok"), "Paid [number] ok")
+        for text in ("Mini at 100.101.72.120, deployed 2026-10-28 15:46", "NAS 10.0.0.253 and 100.115.85.38 reachable"):
+            self.assertEqual(self.s(text), text)
+        self.assertEqual(self.s("fax 415.555.0172.0 ok"), "fax [number] ok")
 
     def test_prefixed_tokens(self):
         for tok in ("sk-ant-api03-abcDEF123", "ghp_abcdefghijklmnop123456", "github_pat_11ABCDEFG",
                     "xoxb-1234-abcd", "AKIAABCDEFGHIJKLMNOP", "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig"):
             self.assertEqual(self.s("key " + tok + " end"), "key [secret] end", tok)
+
+    def test_more_known_prefixes_and_the_telegram_shape(self):
+        # Built from parts: a whole token-shaped literal in this file trips
+        # GitHub's push protection, which does not know a test fixture from a leak.
+        tail = "abcDEF123ghiJKL456mn"
+        for tok in ("sk_live_" + tail, "rk_test_" + tail[:9], "whsec_" + tail[:9], "glpat-" + tail,
+                    "AIzaSyD-" + tail + "-a7eZSW0jkFMBWY", "xapp-1-A0B1C2D3E4-567-abc", "ASIA" + "JEXAMPLEEXAMPLE0",
+                    "123456789:AAH" + tail + "SeofSAs0K5PALDsaw"):
+            self.assertEqual(self.s("key " + tok + " end"), "key [secret] end", tok)
+
+    def test_prefixes_are_not_words(self):
+        # An AWS key id is exactly AKIA or ASIA plus 16 characters; Slack tokens are xox[a-eprs]-.
+        for text in ("Deployed to ASIA and EU regions", "AKIA is a prefix", "xoxo- love", "a tasks-list"):
+            self.assertEqual(self.s(text), text)
 
     def test_random_looking_runs(self):
         self.assertEqual(self.s("token Zx9kQ2mV7pL4rT8wN3bY6cJ1 end"), "token [secret] end")
@@ -564,6 +595,17 @@ class TestScrub(unittest.TestCase):
 
     def test_labelled_secrets(self):
         self.assertEqual(self.s("password: hunter2 and api_key=abc"), "password: [secret] and api_key: [secret]")
+
+    def test_labelled_secrets_in_env_names_and_quotes(self):
+        # A word boundary never fell after "_", so DB_PASSWORD=... was kept whole.
+        self.assertEqual(self.s("set DB_PASSWORD=hunter2 and SECRET_KEY=abc"),
+                         "set DB_PASSWORD: [secret] and SECRET_KEY: [secret]")
+        self.assertEqual(self.s("PRIVATE_KEY=abc AWS_SECRET_ACCESS_KEY=short csrf_token=x"),
+                         "PRIVATE_KEY: [secret] AWS_SECRET_ACCESS_KEY: [secret] csrf_token: [secret]")
+        self.assertEqual(self.s("\"password\": \"hunter2\", 'api_key': 'abc'"),
+                         "\"password: [secret] 'api_key: [secret]")
+        for text in ("max_tokens=4096 and tokens: 25132", "the token count: 25,132", "a secret-free recap"):
+            self.assertEqual(self.s(text), text)
 
 
 class TestPauseRequests(HookCase):

@@ -294,7 +294,8 @@ class TestRealAppThroughGate(unittest.TestCase):
         mini = [(b"host", b"dash.example-tailnet.ts.net"), (b"x-forwarded-for", b"100.64.0.20"),
                 (b"tailscale-user-login", b"me@example.org")]
         for path in ("/", "/sessions", "/classic", "/static/sessions.html", "/static/sessions.js",
-                     "/apple-touch-icon.png", "/api/config", "/api/events", "/api/links", "/api/content?ref=x"):
+                     "/apple-touch-icon.png", "/api/config", "/api/events", "/api/links", "/api/summaries",
+                     "/api/content?ref=x"):
             for method in ("GET", "HEAD"):
                 self.assertEqual(self.call(path, mini, method), 403, (method, path))
 
@@ -305,6 +306,7 @@ class TestRealAppThroughGate(unittest.TestCase):
             self.assertEqual(self.call("/static/sessions.js", hdrs), 200)
             self.assertEqual(self.call("/", hdrs), 200)
             self.assertEqual(self.call("/api/config", hdrs), 200)
+            self.assertEqual(self.call("/api/summaries", hdrs), 200)
 
 
 class TestTouchIcon(unittest.TestCase):
@@ -427,6 +429,17 @@ class TestTurnSummaries(unittest.TestCase):
         self.assertEqual(s["steps"][0], {"name": "n" * 60, "status": "pending"})
         self.assertEqual(s["steps_total"], 12)
         self.assertNotIn("extra", s)
+
+    def test_timestamps_totals_and_deep_files_rechecked(self):
+        self.put("x.summary.json", self.good(turn_at="not a time", updated="<b>x</b>", steps_total=True))
+        self.put("y.summary.json", self.good("deep0000", steps_total=10 ** 12))
+        self.put("z.summary.json", "[" * 60_000)  # json.load raises RecursionError, not ValueError
+        out = self.read()
+        self.assertEqual(sorted(out), ["abcd1234", "deep0000"])
+        s = out["abcd1234"]
+        self.assertEqual((s["turn_at"], s["updated"], s["steps_total"]), (None, None, 1))
+        self.assertEqual(out["deep0000"]["steps_total"], 1)
+        self.assertEqual(out["deep0000"]["turn_at"], "2026-10-29T12:00:00.000Z")
 
     def test_newest_file_wins_for_one_session(self):
         self.put("a.summary.json", self.good(recap="older"), age=100)

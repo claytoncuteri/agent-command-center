@@ -341,7 +341,7 @@ for files under `~/.claude/projects`. Without it, rows read "Session <id>".
 and set `"turn_summaries": true`, and the dashboard can show what a session
 did and what it needs from you, in the session's own words.
 - **What it keeps:** each task-list step's name (the desktop app's plan, or `TodoWrite` in the terminal), and from the desktop app's end-of-turn summary its recap (300 characters), its question (100), whether it is blocked, and its two answer buttons' labels (24 each). Never a button's hidden message, never any other tool's input, never the prompt or a reply.
-- **Scrubbed first:** emails, URL query strings, runs of 10 or more digits, and token-shaped strings (known key prefixes and long random-looking runs) are blanked before anything is written. This catches common slips; it is not a guarantee, so sessions should still never write secrets.
+- **Scrubbed first:** emails, passwords in URLs (`user:pass@`), URL query strings, labelled values (`password: ...`, `API_KEY=...`), runs of 10 or more digits (dates and IP addresses excepted), and token-shaped strings (known key prefixes and long random-looking runs) are blanked before anything is written. This catches common slips; it is not a guarantee, so sessions should still never write secrets.
 - **Where it lives:** one `<session>.summary.json` per session in the hook's state folder (0600, folder 0700), replaced whole on every change, so only the latest turn exists. Files untouched for 7 days are deleted when a session starts. Events never carry this text.
 - **Who sees it:** the same viewers as the dashboard (this machine, and `remote_clients`). The terminal has no end-of-turn summary, so terminal sessions show step names only.
 

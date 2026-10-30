@@ -434,6 +434,7 @@ _SUMMARY_KEEP_SECONDS = 7 * 86400
 _SUMMARY_MAX_BYTES = 64_000
 _SUMMARY_TTL_SECONDS = 5.0
 _STEP_STATES = ("pending", "in_progress", "completed")
+_STAMP = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?Z")  # the hook's _now_iso()
 _summaries_cache: dict = {"at": 0.0, "root": None, "data": {}}
 
 
@@ -448,6 +449,10 @@ def _text(value, cap: int) -> Optional[str]:
     return value[:cap] if isinstance(value, str) and value.strip() else None
 
 
+def _stamp(value) -> Optional[str]:
+    return value if isinstance(value, str) and _STAMP.fullmatch(value) else None
+
+
 def _clean_summary(doc: dict) -> dict:
     steps = []
     for x in doc.get("steps") if isinstance(doc.get("steps"), list) else []:
@@ -455,17 +460,19 @@ def _clean_summary(doc: dict) -> dict:
             status = x.get("status") if x.get("status") in _STEP_STATES else "pending"
             steps.append({"name": _text(x.get("name"), 60) or "", "status": status})
     total = doc.get("steps_total")
+    if isinstance(total, bool) or not isinstance(total, int) or not len(steps) <= total <= 999:
+        total = len(steps)
     options = [o[:24] for o in (doc.get("options") if isinstance(doc.get("options"), list) else [])
                if isinstance(o, str) and o.strip()][:2]
     return {
         "steps": steps,
-        "steps_total": total if isinstance(total, int) and total >= len(steps) else len(steps),
+        "steps_total": total,
         "recap": _text(doc.get("recap"), 300),
         "ask": _text(doc.get("ask"), 100),
         "options": options,
         "blocked": doc.get("blocked") is True,
-        "turn_at": _text(doc.get("turn_at"), 40),
-        "updated": _text(doc.get("updated"), 40),
+        "turn_at": _stamp(doc.get("turn_at")),
+        "updated": _stamp(doc.get("updated")),
     }
 
 
@@ -486,7 +493,7 @@ def turn_summaries(root: Optional[pathlib.Path] = None, now: Optional[float] = N
                 continue
             with path.open(encoding="utf-8") as f:
                 doc = json.load(f)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):  # a deeply nested file is a RecursionError
             continue
         if not isinstance(doc, dict):
             continue
