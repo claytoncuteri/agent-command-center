@@ -52,7 +52,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 | `remote_clients` | `[]` | Tailnet (or LAN) addresses allowed to view the dashboard through a local reverse proxy such as `tailscale serve`. Empty means no remote viewers. See [Viewing from your phone](#viewing-from-your-phone). |
 | `touch_icon` | `null` | Path to a PNG served at `/apple-touch-icon.png`, the icon an iPhone uses for Add to Home Screen. |
 | `project_names` | `{}` | Friendly project names in the session view. See [Project names](#project-names). |
-| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
+| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first), `"whitehouse"` (the pixel-art building, see [The White House view](#the-white-house-view)) or `"classic"` (agent cards and the browser approvals workflow). All stay reachable at `/sessions`, `/whitehouse` and `/classic`, and the Sessions and White House pages carry a toggle that remembers your last choice per browser. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
 | `title` | `"Agent Command Center"` | Displayed in the header and browser tab. |
@@ -335,6 +335,23 @@ hooks. To show titles, prefix each hook command with `ACC_READ_TITLES=1 `: the
 script then reads the title from the session's history file, parsing only its
 small `custom-title` lines and skipping every other line undecoded, and only
 for files under `~/.claude/projects`. Without it, rows read "Session <id>".
+
+## The White House view
+
+`/whitehouse` draws your sessions as a pixel-art building. Each project is a
+department with its own office: a secretary at the big desk and one staffer
+per session at the workstations, with a colored ring and monitor for status
+(amber with "!" needs you, green working, blue your turn, grey idle). The Oval
+Office sits in the middle; when a session needs a decision, its department's
+secretary walks a memo down the corridor to the President's desk and waits
+there until you answer in Claude. Updates that need nothing from you stay on
+the desk list, so nobody walks for them.
+
+- **On your desk:** Decisions (oldest first), For your information, Finished today, and an Annex for departments beyond the 16 drawn offices.
+- **Dossier:** tap a staffer, an office or a desk item. With [turn summaries](#turn-summaries-opt-in) on, a session's memo shows what it needs from you with its own answer buttons, what it did, its plan, and recent activity. Without them, you get the fixed labels only. Watchtower only shows; you answer in the Claude app.
+- **Moving around:** Cmd/Ctrl + scroll zooms around the pointer, Shift + scroll pans sideways, a plain scroll still scrolls the page; when zoomed in, drag to pan and use **Whole building** to reset. On a phone, tap an office to zoom to it; pinch works once zoomed. The art renders at your screen's real pixel density, so it stays crisp at any zoom.
+- **Battery:** animation runs at 30 frames a second at most, stops when the tab is hidden, and with "reduce motion" on people jump instead of walking.
+- **Art:** the characters, furniture and tiles are the default skin of [agents-office](https://github.com/ailtonloures/agents-office), vendored under `static/skins/agents-office/` with its license file (CC0 1.0; their code is MIT and is not used here). The Oval Office pieces (rug, seal, flags, drapes, runner, nameplates) are drawn by this page's own code. The seal is made up; the real presidential seal is never used.
 
 <a id="turn-summaries-opt-in"></a>
 **Turn summaries (opt-in).** Prefix each hook command with `ACC_SUMMARIES=1 `

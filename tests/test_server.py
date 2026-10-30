@@ -105,6 +105,16 @@ class TestViews(unittest.TestCase):
             self.assertEqual(server.page_for("classic"), "index.html")
             self.assertEqual(server.page_for("/sessions/"), "sessions.html")
 
+    def test_whitehouse_path_and_default(self):
+        self.assertEqual(server.page_for("whitehouse"), "whitehouse.html")
+        self.assertEqual(server.page_for("/whitehouse/x"), "whitehouse.html")
+        server.CONFIG["view"] = "whitehouse"
+        self.assertEqual(server.page_for(""), "whitehouse.html")
+        self.assertEqual(server.page_for("sessions"), "sessions.html")
+        self.assertTrue((server.STATIC_DIR / "whitehouse.html").exists())
+        self.assertTrue((server.STATIC_DIR / "whitehouse.js").exists())
+        self.assertTrue((server.STATIC_DIR / "skins" / "agents-office" / "LICENSES.md").exists())
+
     def test_classic_as_default(self):
         server.CONFIG["view"] = "classic"
         self.assertEqual(server.page_for(""), "index.html")

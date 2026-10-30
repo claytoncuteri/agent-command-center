@@ -79,7 +79,10 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .starfield svg, .live i, .s-work .dot { animation: none; } }
 .brand { min-width: 0; font-family: "Space Grotesk"; font-weight: 700; font-size: 19px; letter-spacing: .3px; }
 .brand small { display: block; font-family: "Inter"; font-weight: 500; font-size: 12px; color: var(--sub); letter-spacing: 0; }
-.live { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--green);
+.views { margin-left: auto; flex: none; display: flex; border: 1px solid var(--hair); border-radius: 999px; overflow: hidden; font-size: 12px; }
+.views a { color: var(--sub); text-decoration: none; padding: 5px 11px; }
+.views a.on { background: var(--gold-soft); color: var(--gold); font-weight: 600; }
+.live { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--green);
   border: 1px solid rgba(99,240,182,.35); background: var(--green-soft); padding: 5px 10px; border-radius: 99px; }
 .live i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; animation: pulse 2.4s infinite; }
 .live.off { color: var(--red); border-color: rgba(255,128,128,.35); background: var(--red-soft); }
@@ -240,6 +243,7 @@ button { font: inherit; color: inherit; }
     <div class="mark" id="mark" aria-hidden="true"></div>
     <div class="marks" id="marks" hidden></div>
     <div class="brand"><span id="brandTitle">Agent Command Center</span><small id="brandSub">Connecting&hellip;</small></div>
+    <nav class="views" aria-label="View"><a class="on" href="/sessions" aria-current="page">Sessions</a><a href="/whitehouse">White House</a></nav>
     <span class="live wait" id="live"><i></i><span id="liveLabel">Connecting</span></span>
   </header>
 
@@ -300,6 +304,12 @@ button { font: inherit; color: inherit; }
   var lastUpdate = null;
   var openKey = null;
   var ui = load({ project: null, state: null, idleOpen: false, closedOpen: false });
+  // The view toggle remembers the last choice per browser: "/" opens the one
+  // you used last, while /sessions and /whitehouse always open themselves.
+  try {
+    if (location.pathname === '/' && localStorage.getItem('acc.view') === 'whitehouse') location.replace('/whitehouse');
+    else localStorage.setItem('acc.view', 'sessions');
+  } catch (_) {}
 
   function load(defaults) {
     try {

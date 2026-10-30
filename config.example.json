@@ -38,7 +38,7 @@
 
   "telegram": null,
 
-  "_view_comment": "What / serves: 'sessions' (default; one row per session, needs-you first, phone friendly) or 'classic' (agent cards and the browser approvals workflow). Both stay reachable at /sessions and /classic.",
+  "_view_comment": "What / serves: 'sessions' (default; one row per session, needs-you first, phone friendly), 'whitehouse' (the pixel-art building: one office per project, decisions walked to the President's desk; see README, The White House view) or 'classic' (agent cards and the browser approvals workflow). All stay reachable at /sessions, /whitehouse and /classic.",
   "view": "sessions",
 
   "_claude_app_links_comment": "macOS + Claude desktop app: add 'Open in Claude' to sessions waiting on you, opening that session in the app. Reads only two id fields (sessionId, cliSessionId) from the app's per-session records under ~/Library/Application Support/Claude/claude-code-sessions. The app's record format is not a public API and may change; if it does, the buttons simply disappear.",

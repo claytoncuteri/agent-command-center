@@ -1,0 +1,634 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a1330">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Agent Command Center</title>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0a1330; --bg2: #0d1a40;
+  --glass: rgba(28,48,96,.72); --glass2: rgba(20,36,78,.66);
+  --hair: rgba(150,195,255,.22); --hair-strong: rgba(170,210,255,.38);
+  --text: #eef4ff; --sub: #a9bddb; --faint: #7d93b8;
+  --gold: #f0d38c; --gold-soft: rgba(240,211,140,.16);
+  --blue: #6fd0ff; --green: #63f0b6; --amber: #ffcf5c; --red: #ff7b8a; --violet: #c9a6ff;
+  --paper: #fbf7ec; --paper-ink: #26215c; --paper-rule: #e6dab8; --paper-gold: #854f0b;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.45 Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+body { background: radial-gradient(1200px 600px at 20% -10%, #1a2f6e 0%, var(--bg) 60%), var(--bg); min-height: 100vh; }
+a { color: var(--blue); }
+h1, h2, h3 { font-family: "Space Grotesk", Inter, sans-serif; margin: 0; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 10px 14px calc(24px + env(safe-area-inset-bottom)); }
+.top { display: flex; align-items: center; gap: 12px; padding: 6px 2px 10px; }
+.brand { display: flex; flex-direction: column; min-width: 0; }
+.brand span { font: 600 17px/1.1 "Space Grotesk", sans-serif; }
+.brand small { color: var(--sub); font-size: 12px; margin-top: 2px; }
+.views { margin-left: auto; display: flex; border: 1px solid var(--hair); border-radius: 999px; overflow: hidden; font-size: 12px; }
+.views a { color: var(--sub); text-decoration: none; padding: 5px 11px; }
+.views a.on { background: var(--gold-soft); color: var(--gold); font-weight: 600; }
+.live { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--green); }
+.live i { width: 8px; height: 8px; border-radius: 50%; background: var(--green); display: inline-block; animation: pulse 2.4s infinite; }
+.live.off { color: var(--red); } .live.off i { background: var(--red); animation: none; }
+.live.wait { color: var(--sub); } .live.wait i { background: var(--sub); animation: none; }
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+.offline { background: rgba(255,123,138,.12); border: 1px solid rgba(255,123,138,.35); border-radius: 12px; padding: 10px 14px; font-size: 13px; margin-bottom: 10px; }
+.offline small { display: block; color: var(--sub); margin-top: 2px; }
+.brief { display: flex; gap: 10px; align-items: flex-start; background: var(--glass2); border: 1px solid var(--hair); border-radius: 14px; padding: 10px 14px; margin-bottom: 10px; font-size: 14px; }
+.brief b { color: var(--gold); font-weight: 600; white-space: nowrap; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@media (min-width: 980px) { .grid { grid-template-columns: minmax(0, 1.45fr) minmax(320px, 1fr); align-items: start; } .desk { order: 0; } .room { order: 1; } .dossier { order: 2; } }
+.room { position: relative; background: #1e1712; border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; }
+.room canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; image-rendering: crisp-edges; cursor: pointer; touch-action: pan-y; }
+.room canvas.zoomed { touch-action: none; cursor: grab; }
+.room canvas.dragging { cursor: grabbing; }
+.room .tools { position: absolute; top: 8px; right: 8px; display: flex; gap: 6px; }
+.room .tools button, .dossier button, .opt { font: 600 12px Inter, sans-serif; color: var(--text); background: rgba(10,19,48,.78); border: 1px solid var(--hair-strong); border-radius: 999px; padding: 5px 11px; cursor: pointer; }
+.room .tools button:hover { border-color: var(--gold); }
+.card { background: var(--glass); border: 1px solid var(--hair); border-radius: 14px; padding: 12px 14px; }
+.card h2 { font-size: 15px; margin-bottom: 4px; }
+.sec { font-size: 12px; color: var(--sub); text-transform: none; margin: 12px 0 4px; display: flex; gap: 8px; align-items: baseline; }
+.sec .n { color: var(--gold); font-weight: 600; }
+.row { display: flex; justify-content: space-between; gap: 8px; padding: 7px 0; border-top: 1px solid var(--hair); font-size: 13px; cursor: pointer; }
+.row:hover { color: #fff; }
+.row .who { flex: 1 1 auto; min-width: 0; display: flex; gap: 8px; align-items: center; }
+.row .who span.t { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.row .who small { color: var(--faint); white-space: nowrap; }
+.row .ago { color: var(--faint); white-space: nowrap; font-size: 12px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; display: inline-block; }
+.d-decision { background: var(--amber); } .d-working { background: var(--green); } .d-update, .d-turn { background: var(--blue); }
+.d-idle, .d-closed { background: var(--faint); } .d-paused { background: var(--violet); }
+.empty { color: var(--faint); font-size: 13px; padding: 6px 0; }
+.memo { background: var(--paper); color: var(--paper-ink); border-radius: 6px; padding: 14px 16px; }
+.memo .kicker { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--paper-gold); }
+.memo h3 { font-size: 17px; color: var(--paper-ink); margin: 2px 0 2px; overflow-wrap: anywhere; }
+.memo .from { font-size: 12px; color: #3c3489; margin-bottom: 8px; }
+.memo .lbl { font-size: 11px; color: var(--paper-gold); margin: 10px 0 2px; letter-spacing: .04em; text-transform: uppercase; }
+.memo .need { background: #fff2cc; border: 1px solid #f0d38c; border-radius: 6px; padding: 8px 10px; }
+.memo .need .q { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.memo .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+.memo .opt { color: var(--paper-ink); background: #fffaf0; border-color: #c9a24a; cursor: default; }
+.memo .opt.link { cursor: pointer; text-decoration: none; }
+.memo .note { font-size: 12px; color: #5f5e5a; margin-top: 6px; }
+.memo .text { font-size: 14px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.memo .steps div { font-size: 13px; padding: 2px 0; display: flex; gap: 8px; }
+.memo .steps i { font-style: normal; width: 14px; text-align: center; }
+.memo .act div { display: flex; gap: 10px; font-size: 12px; padding: 2px 0; color: #444; }
+.memo .act span:first-child { color: #8a8a80; min-width: 48px; }
+.chip { font-size: 11px; padding: 2px 8px; border-radius: 999px; background: #e9e3d3; color: #3c3489; white-space: nowrap; }
+.credit { color: var(--faint); font-size: 11px; margin-top: 14px; text-align: center; }
+.credit a { color: var(--sub); }
+@media (prefers-reduced-motion: reduce) { .live i { animation: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand"><span id="brandTitle">Agent Command Center</span><small id="brandSub">The White House</small></div>
+    <nav class="views" aria-label="View"><a href="/sessions">Sessions</a><a class="on" href="/whitehouse" aria-current="page">White House</a></nav>
+    <span class="live wait" id="live"><i></i><span id="liveLabel">Connecting</span></span>
+  </header>
+  <div class="offline" id="offline" hidden role="status"></div>
+  <div class="brief"><b>Chief of Staff</b><span id="brief">Gathering the departments&hellip;</span></div>
+  <div class="grid">
+    <section class="card desk" id="desk" aria-label="On your desk"></section>
+    <section class="room" id="room" aria-label="The building">
+      <canvas id="cv" width="704" height="240"></canvas>
+      <div class="tools"><button id="zoomIn" aria-label="Zoom in">+</button><button id="zoomLess" aria-label="Zoom out">−</button><button id="zoomOut" hidden>Whole building</button></div>
+    </section>
+    <section class="dossier" id="dossier" aria-live="polite"></section>
+  </div>
+  <p class="credit">Pixel art from <a href="https://github.com/ailtonloures/agents-office">agents-office</a> (CC0). Watchtower only shows; you answer in Claude.</p>
+</div>
+<script src="/static/sessions.js"></script>
+<script src="/static/whitehouse.js"></script>
+<script>
+(function () {
+  'use strict';
+  var M = window.ACCSessions, W = window.ACCWhiteHouse;
+  var EVENTS = [], SUMMARIES = {}, LINKS = {}, NAMES = null, BOOTED_AT = null;
+  var ON_THIS_MACHINE = ['127.0.0.1', 'localhost', '[::1]', '::1'].indexOf(location.hostname) >= 0;
+  var REDUCED = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var MODEL = null, DEPTS = [], LISTS = { decisions: [], updates: [], finished: [] }, LAY = W.layout(0);
+  var lastUpdate = null, sel = { kind: 'brief' };
+  // The camera: Cmd/Ctrl + scroll zooms around the pointer, Shift + scroll pans
+  // sideways, a plain scroll still scrolls the page; when zoomed in you can drag.
+  var cam = { k: 1, x: 0, y: 0 }, CAM_MAX = 6;
+  try { localStorage.setItem('acc.view', 'whitehouse'); } catch (_) {}
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function $(id) { return document.getElementById(id); }
+  function now() { return Date.now(); }
+  function titleOf(s) { return s.title || (s.project + ' session ' + (s.session || '').slice(0, 4)); }
+  function ago(t) { if (typeof t !== 'number') return ''; var r = M.rel(now() - t); return r === 'now' ? 'now' : r; }
+  function hostOf(x) { return x.s.host ? x.s.host : ''; }
+
+  // ── Skin (agents-office default, CC0) ─────────────────────────────────────────
+  var SKIN = null, IMG = {}, looks = {};
+  function img(src) {
+    return new Promise(function (res) { var i = new Image(); i.onload = function () { res(i); }; i.onerror = function () { res(null); }; i.src = '/static/skins/agents-office/' + src; });
+  }
+  function loadSkin() {
+    return fetch('/static/skins/agents-office/skin.json').then(function (r) { return r.json(); }).then(function (skin) {
+      SKIN = skin;
+      var files = ['tileset.png', 'props.png', 'characters/body.png', 'characters/outfit-tech-lead.png', 'characters/outfit-developer.png',
+        'characters/accessory-tech-lead.png'].concat(skin.characters.hair.slice(0, 6));
+      return Promise.all(files.map(img)).then(function (list) { files.forEach(function (f, i) { IMG[f] = list[i]; }); });
+    }).catch(function () { SKIN = null; });
+  }
+  function hex(h) { h = h.replace('#', ''); return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)]; }
+  function mix(c, t, k) { return [0, 1, 2].map(function (i) { return Math.round(c[i] + (t[i] - c[i]) * k); }); }
+  // A recolored character sheet for one look: body, outfit, hair, optional accessory.
+  function look(skinI, hairI, shirtI, pantsI, role) {
+    var key = [skinI, hairI, shirtI, pantsI, role].join('/');
+    if (looks[key]) return looks[key];
+    var P = SKIN.characters.palettes, B = SKIN.characters.baseColors;
+    var map = {};
+    function set(name, color) {
+      var c = hex(color);
+      map[B[name]] = c; map[B[name + 'Shade']] = mix(c, [0, 0, 0], .3); map[B[name + 'Light']] = mix(c, [255, 255, 255], .3);
+    }
+    set('skin', P.skin[skinI % P.skin.length]); set('hair', P.hair[hairI % P.hair.length]);
+    set('shirt', P.shirt[shirtI % P.shirt.length]); set('pants', P.pants[pantsI % P.pants.length]);
+    var w = IMG['characters/body.png'].width, h = IMG['characters/body.png'].height;
+    var c = document.createElement('canvas'); c.width = w; c.height = h;
+    var g = c.getContext('2d');
+    var layers = ['characters/body.png', role === 'lead' ? 'characters/outfit-tech-lead.png' : 'characters/outfit-developer.png',
+      'characters/hair-' + (hairI % 6) + '.png'];
+    if (role === 'lead') layers.push('characters/accessory-tech-lead.png');
+    layers.forEach(function (f) { if (IMG[f]) g.drawImage(IMG[f], 0, 0); });
+    var d = g.getImageData(0, 0, w, h), px = d.data;
+    var lut = {};
+    Object.keys(map).forEach(function (k) { var s = hex(k); lut[(s[0] << 16) | (s[1] << 8) | s[2]] = map[k]; });
+    for (var i = 0; i < px.length; i += 4) {
+      if (!px[i + 3]) continue;
+      var m = lut[(px[i] << 16) | (px[i + 1] << 8) | px[i + 2]];
+      if (m) { px[i] = m[0]; px[i + 1] = m[1]; px[i + 2] = m[2]; }
+    }
+    g.putImageData(d, 0, 0);
+    return (looks[key] = c);
+  }
+  function frame(g, sheet, f, x, y) {
+    var fw = SKIN.characters.frame.width, fh = SKIN.characters.frame.height, cols = SKIN.characters.columns;
+    g.drawImage(sheet, (f % cols) * fw, Math.floor(f / cols) * fh, fw, fh, Math.round(x - fw / 2), Math.round(y - fh), fw, fh);
+  }
+  function prop(g, name, x, y) {
+    var f = SKIN.props.frames[name]; if (!f || !IMG['props.png']) return null;
+    g.drawImage(IMG['props.png'], f.x, f.y, f.w, f.h, Math.round(x - f.ax), Math.round(y - f.ay), f.w, f.h);
+    return f;
+  }
+  function tile(g, name, x, y) {
+    var i = SKIN.tileset.tiles[name]; if (i === undefined || !IMG['tileset.png']) return;
+    var cols = SKIN.tileset.columns, t = SKIN.tileSize;
+    g.drawImage(IMG['tileset.png'], (i % cols) * t, Math.floor(i / cols) * t, t, t, x, y, t, t);
+  }
+
+  // ── Building geometry ─────────────────────────────────────────────────────────
+  var T = 16;
+  function officeBox(o) { return { x: o.x * T, y: o.y * T, w: o.w * T, h: o.h * T }; }
+  function officeDoor(o) { var b = officeBox(o); return { x: b.x + b.w / 2, y: o.door === 'bottom' ? b.y + b.h : b.y }; }
+  function corridorY() { return (LAY.corridor.y + 1.5) * T; }
+  function ovalBox() { var o = LAY.oval; return { x: o.x * T, y: o.y * T, w: o.w * T, h: o.h * T, cx: (o.x + o.w / 2) * T, cy: (o.y + o.h / 2) * T }; }
+  function ovalDoor() { var b = ovalBox(); return { x: b.cx, y: b.y + b.h }; }
+  function deskSpot(i) { var b = ovalBox(); return { x: b.cx - 42 + i * 28, y: b.y + 112 }; }
+  // Furniture hangs off the back wall: at the top in top-row offices, at the
+  // bottom (away from the corridor door) in the rows below.
+  function wallTop(o) { return o.door === 'bottom' ? 32 : 10; }
+  function secretaryHome(o) { var b = officeBox(o); return { x: b.x + b.w / 2, y: b.y + wallTop(o) + 28 }; }
+  function deskSeat(o, k) { var b = officeBox(o); return { x: b.x + 28 + (k % 2) * 56, y: b.y + wallTop(o) + 80 + Math.floor(k / 2) * 40 }; }
+  var RING = { decision: '#ffcf5c', working: '#63f0b6', update: '#6fd0ff', turn: '#6fd0ff', idle: '#8a867e', paused: '#c9a6ff', closed: '#8a867e' };
+  var SCREEN = { decision: '#e0a12e', working: '#2f8f6a', update: '#2e6fb2', turn: '#2e6fb2', idle: '#2c2c2a', paused: '#6a58a8', closed: '#2c2c2a' };
+
+  // ── Actors (positions persist across renders) ─────────────────────────────────
+  var actors = {};   // department name -> {x, y, path, where, dir, f}
+  function routeIn(o, spot) {
+    var d = officeDoor(o), cy = corridorY(), od = ovalDoor();
+    var p = [[d.x, d.y], [d.x, cy], [od.x, cy], [od.x, od.y], [spot.x, spot.y]];
+    return p;
+  }
+  function routeOut(o) {
+    var d = officeDoor(o), cy = corridorY(), od = ovalDoor(), home = secretaryHome(o);
+    return [[od.x, od.y], [od.x, cy], [d.x, cy], [d.x, d.y], [home.x, home.y]];
+  }
+  function syncActors() {
+    var seen = {};
+    var queue = DEPTS.filter(function (d) { return d.inOval && d.drawn; });
+    queue.sort(function (a, b) { return (a.oldestDecision || 0) - (b.oldestDecision || 0); });
+    DEPTS.forEach(function (d) {
+      if (!d.drawn) return;
+      seen[d.name] = true;
+      var o = LAY.offices[d.index], home = secretaryHome(o);
+      var a = actors[d.name];
+      if (!a) a = actors[d.name] = { x: home.x, y: home.y, path: [], where: 'office', dir: 'down', f: Math.floor(Math.random() * 40) };
+      a.o = o; a.d = d;
+      var qi = queue.indexOf(d);
+      if (d.inOval && a.where === 'office') { a.where = 'in'; a.path = routeIn(o, deskSpot(qi)); if (REDUCED) jump(a); }
+      else if (d.inOval && (a.where === 'oval' || a.where === 'in')) { var sp = deskSpot(qi); if (a.where === 'oval' && (a.x !== sp.x || a.y !== sp.y)) { a.path = [[sp.x, sp.y]]; a.where = 'in'; } }
+      else if (!d.inOval && (a.where === 'oval' || a.where === 'in')) { a.where = 'out'; a.path = routeOut(o); if (REDUCED) jump(a); }
+    });
+    Object.keys(actors).forEach(function (n) { if (!seen[n]) delete actors[n]; });
+  }
+  function jump(a) { var last = a.path[a.path.length - 1]; a.x = last[0]; a.y = last[1]; a.path = []; }
+  function step(a, speed) {
+    if (!a.path.length) { if (a.where === 'in') { a.where = 'oval'; a.dir = 'up'; } if (a.where === 'out') { a.where = 'office'; a.dir = 'down'; } return false; }
+    var t = a.path[0], dx = t[0] - a.x, dy = t[1] - a.y, d = Math.hypot(dx, dy);
+    if (d <= speed) { a.x = t[0]; a.y = t[1]; a.path.shift(); return step(a, speed - d) || true; }
+    a.x += dx / d * speed; a.y += dy / d * speed;
+    a.dir = Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+    return true;
+  }
+
+  // ── Drawing ───────────────────────────────────────────────────────────────────
+  var cv = $('cv'), g = cv.getContext('2d'), F = 0, hits = [];
+  var OUTLINE = '#1e1712';
+  function rect(x, y, w, h, c) { g.fillStyle = c; g.fillRect(Math.round(x), Math.round(y), Math.round(w), Math.round(h)); }
+  function ellipse(x, y, rx, ry, fill, stroke, lw) {
+    g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2);
+    if (fill) { g.fillStyle = fill; g.fill(); } if (stroke) { g.strokeStyle = stroke; g.lineWidth = lw || 1; g.stroke(); }
+  }
+  function star(cx, cy, r, col) {
+    g.fillStyle = col; g.beginPath();
+    for (var i = 0; i < 10; i++) { var a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? r * .42 : r; g.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+    g.closePath(); g.fill();
+  }
+  function ring(x, y, col) { ellipse(x, y, 8, 3, null, OUTLINE, 3); ellipse(x, y, 8, 3, null, col, 1.5); }
+  function label(x, y, text, on) {
+    g.font = '600 10px Inter, sans-serif'; var w = g.measureText(text).width + 10;
+    rect(x - w / 2 - 1, y - 1, w + 2, 14, on ? '#f0d38c' : OUTLINE); rect(x - w / 2, y, w, 12, on ? '#f0d38c' : '#f7f2e6');
+    g.fillStyle = on ? '#412402' : '#26215c'; g.textAlign = 'center'; g.textBaseline = 'alphabetic'; g.fillText(text, x, y + 9.5);
+  }
+
+  function drawFloor(b, kind) {
+    for (var y = b.y; y < b.y + b.h; y += T) for (var x = b.x; x < b.x + b.w; x += T) tile(g, kind === 'hall' ? 'tile' : ((x + y) / T) % 2 ? 'wood-b' : 'wood', x, y);
+  }
+  function drawOffice(o, d, selected) {
+    var b = officeBox(o);
+    drawFloor(b, 'wood');
+    // Back wall with a window; the door faces the corridor.
+    var wallY = o.door === 'bottom' ? b.y : b.y + b.h - 2 * T;
+    for (var x = b.x; x < b.x + b.w; x += T) { tile(g, 'wall-top', x, wallY); tile(g, 'wall-mid', x, wallY + T); }
+    if (o.door === 'bottom') { tile(g, 'window-top', b.x + 3 * T, wallY); tile(g, 'window', b.x + 3 * T, wallY + T); }
+    rect(b.x, b.y, b.w, 1, OUTLINE); rect(b.x, b.y + b.h - 1, b.w, 1, OUTLINE); rect(b.x, b.y, 1, b.h, OUTLINE); rect(b.x + b.w - 1, b.y, 1, b.h, OUTLINE);
+    if (selected) { g.strokeStyle = '#f0d38c'; g.lineWidth = 2; g.strokeRect(b.x + 2, b.y + 2, b.w - 4, b.h - 4); }
+    // Furniture, back to front.
+    var home = secretaryHome(o);
+    prop(g, 'bookshelf', b.x + 4, b.y + wallTop(o) + 46);
+    prop(g, 'plant', b.x + b.w - 24, b.y + wallTop(o) + 28);
+    var ld = prop(g, 'lead-desk', home.x - 27 + 3, home.y + 30);
+    var items = [];
+    d.staff.slice(0, d.desks).forEach(function (x, k) {
+      var seat = deskSeat(o, k);
+      items.push({ y: seat.y, draw: function () {
+        var f = prop(g, 'workstation', seat.x - 19 + 3, seat.y + 20);
+        if (f && f.screens) f.screens.forEach(function (sc) { rect(seat.x - 19 + 3 - f.ax + sc.x + f.ax - 3, seat.y + 20 - f.ay + sc.y + f.ay - 39 + 39 - 42 + 42 - 31 + 31 - 31, 0, 0, 'transparent'); });
+        // Screen glow by standing: the workstation's screen sits 31px above its anchor.
+        rect(seat.x - 15, seat.y - 12, 14, 9, SCREEN[x.standing] || SCREEN.idle);
+        if (x.standing === 'decision') { g.fillStyle = '#412402'; g.font = '700 9px Inter'; g.textAlign = 'center'; g.fillText('!', seat.x - 8, seat.y - 4.5); }
+        else if (x.standing === 'working') { for (var l = 0; l < 2; l++) rect(seat.x - 13, seat.y - 10 + l * 3, 3 + ((F / 10 + l * 2 + k * 3) % 8), 1, '#b9f0d6'); }
+        var lk = look(2 + k + d.index, k + d.index, d.index, k, 'staff');
+        var pose = x.standing === 'working' ? SKIN.characters.poses['sit-type' + (Math.floor((F + k * 7) / 14) % 2 ? '-b' : '')] : SKIN.characters.poses.read;
+        if (x.standing === 'idle' || x.standing === 'closed') { g.globalAlpha = .55; }
+        frame(g, lk, pose, seat.x, seat.y + 4);
+        g.globalAlpha = 1;
+        ring(seat.x, seat.y + 6, RING[x.standing] || RING.idle);
+        hits.push({ kind: 'session', x: seat.x - 12, y: seat.y - 30, w: 24, h: 40, staff: x });
+      } });
+    });
+    items.sort(function (a, b2) { return a.y - b2.y; }).forEach(function (it) { it.draw(); });
+    var a = actors[d.name];
+    if (a && a.where === 'office') {
+      var lk = look(d.index, d.index + 3, d.index, 1, 'lead');
+      frame(g, lk, SKIN.characters.idle.down[Math.floor(F / 30) % 2], home.x, home.y);
+      ring(home.x, home.y + 2, d.decisions ? RING.decision : RING.working);
+      hits.push({ kind: 'dept', x: home.x - 12, y: home.y - 32, w: 24, h: 36, dept: d });
+    } else if (a) {
+      g.fillStyle = '#5f5e5a'; g.font = '10px Inter'; g.textAlign = 'center'; g.fillText('In the Oval', home.x, home.y - 14);
+    }
+    if (d.staff.length > d.desks) label(b.x + b.w - 26, b.y + b.h - 22, '+' + (d.staff.length - d.desks));
+    // Door and nameplate on the corridor side.
+    var dr = officeDoor(o);
+    if (o.door === 'bottom') { rect(dr.x - 12, dr.y - 3, 24, 4, '#d6cdb8'); label(dr.x, dr.y - 20, d.name, d.inOval); }
+    else { prop(g, 'door-back', dr.x - 15 + 7, dr.y + 2 * T + 2); label(dr.x, dr.y + 3, d.name, d.inOval); }
+    hits.push({ kind: 'office', x: b.x, y: b.y, w: b.w, h: b.h, dept: d });
+  }
+  function drawCorridor() {
+    var c = LAY.corridor, y0 = c.y * T, h = c.h * T;
+    for (var y = y0; y < y0 + h; y += T) for (var x = 0; x < c.w * T; x += T) tile(g, 'tile', x, y);
+    rect(0, y0 + T, c.w * T, T, '#8e1f1f'); rect(0, y0 + T, c.w * T, 2, '#c9a24a'); rect(0, y0 + 2 * T - 2, c.w * T, 2, '#c9a24a');
+  }
+  function drawOval(selected) {
+    var b = ovalBox();
+    rect(b.x, b.y, b.w, b.h, '#1e1712');
+    g.save(); g.beginPath(); g.ellipse(b.cx, b.cy, b.w / 2 - 2, b.h / 2 + 6, 0, 0, Math.PI * 2); g.clip();
+    drawFloor(b, 'wood');
+    // Back wall with three tall windows and gold drapes.
+    for (var x = b.x; x < b.x + b.w; x += T) { tile(g, 'wall-top', x, b.y); tile(g, 'wall-mid', x, b.y + T); }
+    [b.cx - 48, b.cx - 8, b.cx + 32].forEach(function (wx) {
+      tile(g, 'window-top', wx, b.y); tile(g, 'window', wx, b.y + T);
+      rect(wx - 4, b.y + 2, 4, 30, '#c9993a'); rect(wx + 16, b.y + 2, 4, 30, '#c9993a'); rect(wx - 6, b.y, 28, 3, '#b8862b');
+    });
+    // Rug with a made-up seal (never the real one).
+    ellipse(b.cx, b.cy + 22, 92, 42, '#1e2f5c'); ellipse(b.cx, b.cy + 22, 88, 39, '#e9dec2');
+    for (var i = 0; i < 24; i++) { g.fillStyle = i % 2 ? '#dfcfa8' : '#eee5cd'; g.beginPath(); g.moveTo(b.cx, b.cy + 22); g.ellipse(b.cx, b.cy + 22, 82, 35, 0, i * Math.PI / 12, (i + 1) * Math.PI / 12); g.closePath(); g.fill(); }
+    ellipse(b.cx, b.cy + 22, 22, 13, '#1e2f5c', '#c9a24a', 1.5); star(b.cx, b.cy + 22, 7, '#e8c766');
+    g.restore();
+    ellipse(b.cx, b.cy, b.w / 2 - 2, b.h / 2 + 6, null, '#c9a24a', 2);
+    if (selected) ellipse(b.cx, b.cy, b.w / 2 - 5, b.h / 2 + 3, null, '#f0d38c', 2);
+    // Flags, the desk, the President, the Chief of Staff.
+    rect(b.cx - 60, b.y + 14, 2, 44, '#c9a24a'); for (var s = 0; s < 6; s++) rect(b.cx - 58, b.y + 16 + s * 3, 16, 3, s % 2 ? '#f4f1ea' : '#a32d2d'); rect(b.cx - 58, b.y + 16, 7, 9, '#1e2f5c');
+    rect(b.cx + 58, b.y + 14, 2, 44, '#c9a24a'); rect(b.cx + 42, b.y + 16, 16, 18, '#1e2f5c'); star(b.cx + 50, b.y + 25, 4, '#e8c766');
+    var pres = look(0, 6, 0, 0, 'lead');
+    frame(g, pres, SKIN.characters.idle.down[Math.floor(F / 40) % 2], b.cx, b.y + 58);
+    rect(b.cx - 52, b.y + 54, 104, 10, '#5c3720'); rect(b.cx - 52, b.y + 64, 104, 12, '#3e2010'); rect(b.cx - 52, b.y + 54, 104, 2, '#7a4a2a');
+    rect(b.cx - 44, b.y + 48, 4, 6, '#c9a24a'); rect(b.cx - 48, b.y + 44, 12, 5, '#1e5b3a'); rect(b.cx + 30, b.y + 50, 10, 5, '#141010');
+    var n = DEPTS.filter(function (d) { return d.inOval; }).length;
+    for (var p = 0; p < Math.min(n, 4); p++) { rect(b.cx + 8 + p * 2, b.y + 50 - p * 2, 14, 7, OUTLINE); rect(b.cx + 9 + p * 2, b.y + 51 - p * 2, 12, 5, '#f7f2e6'); }
+    prop(g, 'sofa', b.x + 40, b.cy + 44); prop(g, 'sofa', b.x + b.w - 80, b.cy + 44); prop(g, 'coffee-table', b.cx - 16, b.cy + 58);
+    var cos = look(1, 1, 5, 1, 'lead'), cx = b.cx + 68, cy = b.y + 96;
+    ring(cx, cy + 2, '#e8c766'); frame(g, cos, SKIN.characters.idle.down[Math.floor(F / 36) % 2], cx, cy);
+    label(cx, cy + 6, 'Chief of Staff', sel.kind === 'brief');
+    hits.push({ kind: 'brief', x: cx - 12, y: cy - 32, w: 24, h: 40 });
+    var od = ovalDoor(); rect(od.x - 14, od.y - 3, 28, 4, '#d6cdb8');
+  }
+  function drawActors() {
+    var list = Object.keys(actors).map(function (n) { return actors[n]; }).filter(function (a) { return a.where !== 'office'; });
+    list.sort(function (a, b) { return a.y - b.y; });
+    list.forEach(function (a) {
+      var walking = step(a, REDUCED ? 1e9 : 1.6);
+      var lk = look(a.d.index, a.d.index + 3, a.d.index, 1, 'lead');
+      var set = walking ? SKIN.characters.walk[a.dir] : SKIN.characters.idle[a.where === 'oval' ? 'up' : a.dir];
+      var f = set[Math.floor(F / (walking ? 7 : 30)) % set.length];
+      ring(a.x, a.y + 2, RING.decision);
+      frame(g, lk, f, a.x, a.y);
+      if (a.where !== 'out') { rect(a.x + 5, a.y - 20, 7, 9, OUTLINE); rect(a.x + 6, a.y - 19, 5, 7, '#f7f2e6'); }
+      if (a.where === 'oval') { rect(a.x - 5, a.y - 44, 10, 12, a.d.decisions ? '#e8c766' : '#dceaf6'); g.fillStyle = '#412402'; g.font = '700 10px Inter'; g.textAlign = 'center'; g.fillText('!', a.x, a.y - 35); }
+      label(a.x, a.y + 6, a.d.name, sel.kind === 'dept' && sel.dept === a.d);
+      hits.push({ kind: 'dept', x: a.x - 12, y: a.y - 36, w: 24, h: 44, dept: a.d });
+    });
+  }
+  function draw() {
+    if (!SKIN) {
+      // Before the art arrives, say so instead of showing a dark box.
+      g.setTransform(1, 0, 0, 1, 0, 0); rect(0, 0, cv.width, cv.height, OUTLINE);
+      g.fillStyle = '#a9bddb'; g.font = '600 14px Inter, sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillText('Opening the building\u2026', cv.width / 2, cv.height / 2);
+      return;
+    }
+    var Wpx = LAY.width * T, Hpx = Math.max(LAY.height, 15) * T;
+    // The backing store matches the screen's real pixels (displayed size times
+    // devicePixelRatio), so the art stays crisp at any zoom and on any display.
+    var cssW = cv.getBoundingClientRect().width || Wpx, dpr = window.devicePixelRatio || 1;
+    var backW = Math.max(Wpx, Math.round(cssW * dpr)), backH = Math.round(backW * Hpx / Wpx);
+    if (cv.width !== backW || cv.height !== backH) { cv.width = backW; cv.height = backH; }
+    var scale = backW / Wpx;
+    g.setTransform(scale, 0, 0, scale, 0, 0); g.imageSmoothingEnabled = false;
+    rect(0, 0, Wpx, Hpx, OUTLINE);
+    hits = [];
+    g.translate(-cam.x * cam.k, -cam.y * cam.k); g.scale(cam.k, cam.k);
+    drawCorridor();
+    DEPTS.forEach(function (d) { if (d.drawn) drawOffice(LAY.offices[d.index], d, sel.kind === 'dept' && sel.dept === d); });
+    drawOval(false);
+    drawActors();
+    if (LAY.height < 15) { rect(0, LAY.height * T, Wpx, 15 * T - LAY.height * T, OUTLINE); }
+  }
+  var lastFrame = 0;
+  function loop(ts) {
+    requestAnimationFrame(loop);
+    if (document.hidden) return;
+    if (ts - lastFrame < 33) return;   // 30 frames a second at most
+    lastFrame = ts; F++;
+    draw();
+  }
+  function viewSize() { return { w: LAY.width * T, h: Math.max(LAY.height, 15) * T }; }
+  // A pointer position in canvas pixels (before the camera) and in the building (after it).
+  function screenPoint(e) {
+    var r = cv.getBoundingClientRect(), v = viewSize();
+    return { x: (e.clientX - r.left) * v.w / r.width, y: (e.clientY - r.top) * v.h / r.height };
+  }
+  function canvasPoint(e) { var s = screenPoint(e); return { x: s.x / cam.k + cam.x, y: s.y / cam.k + cam.y }; }
+  function clampCam() {
+    var v = viewSize();
+    cam.k = Math.max(1, Math.min(CAM_MAX, cam.k));
+    if (cam.k === 1) { cam.x = 0; cam.y = 0; }
+    else { cam.x = Math.max(0, Math.min(v.w - v.w / cam.k, cam.x)); cam.y = Math.max(0, Math.min(v.h - v.h / cam.k, cam.y)); }
+    cv.classList.toggle('zoomed', cam.k > 1);
+    $('zoomOut').hidden = cam.k === 1;
+  }
+  // Zoom so the building point under the pointer stays under the pointer.
+  function zoomAt(factor, sp) {
+    var k2 = Math.max(1, Math.min(CAM_MAX, cam.k * factor));
+    var wx = sp.x / cam.k + cam.x, wy = sp.y / cam.k + cam.y;
+    cam.k = k2; cam.x = wx - sp.x / k2; cam.y = wy - sp.y / k2; clampCam();
+  }
+  function fitOffice(d) {
+    var fb = officeBox(LAY.offices[d.index]), v = viewSize();
+    cam.k = Math.min(v.w / fb.w, v.h / fb.h) * .92;
+    cam.x = fb.x + fb.w / 2 - v.w / (2 * cam.k); cam.y = fb.y + fb.h / 2 - v.h / (2 * cam.k); clampCam();
+  }
+  cv.addEventListener('wheel', function (e) {
+    var v = viewSize(), r = cv.getBoundingClientRect(), px = v.w / r.width;   // canvas pixels per CSS pixel
+    if (e.metaKey || e.ctrlKey) { e.preventDefault(); zoomAt(Math.exp(-e.deltaY * 0.0022), screenPoint(e)); return; }
+    if (e.shiftKey || (cam.k > 1 && Math.abs(e.deltaX) > Math.abs(e.deltaY))) {
+      e.preventDefault(); cam.x += (e.deltaX || e.deltaY) * px / cam.k; clampCam();
+    }
+  }, { passive: false });
+  // Drag to pan when zoomed in; a short press is still a tap. Two fingers pinch.
+  var pointers = {}, drag = null, pinch = null;
+  cv.addEventListener('pointerdown', function (e) {
+    pointers[e.pointerId] = e; var ids = Object.keys(pointers);
+    if (ids.length === 2) { var a = pointers[ids[0]], b = pointers[ids[1]]; pinch = { d: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), k: cam.k }; drag = null; return; }
+    if (cam.k > 1) { drag = { sx: e.clientX, sy: e.clientY, cx: cam.x, cy: cam.y, moved: false }; cv.setPointerCapture(e.pointerId); }
+  });
+  cv.addEventListener('pointermove', function (e) {
+    if (!pointers[e.pointerId]) return;
+    pointers[e.pointerId] = e; var ids = Object.keys(pointers);
+    if (pinch && ids.length === 2) {
+      var a = pointers[ids[0]], b = pointers[ids[1]], d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      var mid = screenPoint({ clientX: (a.clientX + b.clientX) / 2, clientY: (a.clientY + b.clientY) / 2 });
+      zoomAt((pinch.k * d / pinch.d) / cam.k, mid); return;
+    }
+    if (!drag) return;
+    var v = viewSize(), r = cv.getBoundingClientRect(), px = v.w / r.width;
+    var dx = e.clientX - drag.sx, dy = e.clientY - drag.sy;
+    if (Math.hypot(dx, dy) > 6) drag.moved = true;
+    if (drag.moved) { cam.x = drag.cx - dx * px / cam.k; cam.y = drag.cy - dy * px / cam.k; clampCam(); cv.classList.add('dragging'); }
+  });
+  function pointerEnd(e) {
+    delete pointers[e.pointerId]; if (Object.keys(pointers).length < 2) pinch = null;
+    cv.classList.remove('dragging');
+    if (drag && drag.moved) { drag = null; suppressClick = true; setTimeout(function () { suppressClick = false; }, 50); return; }
+    drag = null;
+  }
+  var suppressClick = false;
+  cv.addEventListener('pointerup', pointerEnd); cv.addEventListener('pointercancel', pointerEnd);
+  cv.addEventListener('click', function (e) {
+    if (suppressClick) return;
+    var p = canvasPoint(e), hit = null;
+    for (var i = hits.length - 1; i >= 0; i--) { var h = hits[i]; if (p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h && (h.kind !== 'office' || !hit)) { hit = h; if (h.kind !== 'office') break; } }
+    if (!hit) sel = { kind: 'brief' };
+    else if (hit.kind === 'session') sel = { kind: 'session', staff: hit.staff };
+    else if (hit.kind === 'dept' || hit.kind === 'office') {
+      sel = { kind: 'dept', dept: hit.dept };
+      // On a phone the whole building is small: tapping an office (or its secretary) zooms into it.
+      if (cam.k === 1 && cv.getBoundingClientRect().width < 700 && hit.dept.drawn) fitOffice(hit.dept);
+    }
+    else sel = { kind: 'brief' };
+    renderPanels();
+  });
+  $('zoomOut').addEventListener('click', function () { cam.k = 1; clampCam(); });
+  $('zoomIn').addEventListener('click', function () { var v = viewSize(); zoomAt(1.5, { x: v.w / 2, y: v.h / 2 }); });
+  $('zoomLess').addEventListener('click', function () { var v = viewSize(); zoomAt(1 / 1.5, { x: v.w / 2, y: v.h / 2 }); });
+
+  // ── Panels ────────────────────────────────────────────────────────────────────
+  function rowFor(x, right) {
+    return '<div class="row" data-k="' + esc(x.key) + '"><span class="who"><i class="dot d-' + esc(x.standing) + '"></i>' +
+      '<span class="t">' + esc(titleOf(x.s)) + '</span><small>' + esc(x.s.project) + '</small></span><span class="ago">' + esc(right || '') + '</span></div>';
+  }
+  function renderDesk() {
+    var L = LISTS, html = '<h2>On your desk</h2>';
+    html += '<div class="sec"><span class="n">' + L.decisions.length + '</span>Decisions</div>' +
+      (L.decisions.length ? L.decisions.map(function (x) { return rowFor(x, ago(x.s.since || x.s.lastAt)); }).join('') : '<div class="empty">None right now.</div>');
+    html += '<div class="sec"><span class="n">' + L.updates.length + '</span>For your information</div>' +
+      (L.updates.length ? L.updates.slice(0, 6).map(function (x) { return rowFor(x, ago(x.s.summary.turnAt || x.s.lastAt)); }).join('') : '<div class="empty">Nothing new.</div>');
+    html += '<div class="sec"><span class="n">' + L.finished.length + '</span>Finished today</div>' +
+      (L.finished.length ? L.finished.slice(0, 8).map(function (x) { return rowFor(x, ago(x.s.summary.turnAt || x.s.lastAt)); }).join('') : '<div class="empty">Nothing finished today yet.</div>');
+    var annex = DEPTS.filter(function (d) { return !d.drawn; });
+    if (annex.length) html += '<div class="sec">Annex (not drawn)</div>' + annex.map(function (d) { return '<div class="row" data-d="' + esc(d.name) + '"><span class="who"><span class="t">' + esc(d.name) + '</span></span><span class="ago">' + d.staff.length + ' session' + (d.staff.length === 1 ? '' : 's') + '</span></div>'; }).join('');
+    $('desk').innerHTML = html;
+    $('desk').querySelectorAll('[data-k]').forEach(function (el) { el.onclick = function () { var x = staffByKey(el.getAttribute('data-k')); if (x) { sel = { kind: 'session', staff: x }; renderPanels(); } }; });
+    $('desk').querySelectorAll('[data-d]').forEach(function (el) { el.onclick = function () { var d = DEPTS.filter(function (q) { return q.name === el.getAttribute('data-d'); })[0]; if (d) { sel = { kind: 'dept', dept: d }; renderPanels(); } }; });
+  }
+  function staffByKey(k) { for (var i = 0; i < DEPTS.length; i++) for (var j = 0; j < DEPTS[i].staff.length; j++) if (DEPTS[i].staff[j].key === k) return DEPTS[i].staff[j]; return null; }
+  function linkFor(s) { var l = s.session && LINKS[s.session]; if (!l) return null; return ON_THIS_MACHINE ? l.app : (l.web || null); }
+  var WORD = { decision: 'Needs you', working: 'Working', update: 'Update', turn: 'Your turn', idle: 'Idle', paused: 'Paused', closed: 'Closed' };
+  var MARK = { completed: '✓', in_progress: '▶', pending: '○' };
+  function renderDossier() {
+    var el = $('dossier');
+    if (sel.kind === 'session' && sel.staff) {
+      var x = sel.staff, s = x.s, sm = s.summary, html = '';
+      html += '<div class="memo"><div class="kicker">Memorandum for the President</div><h3>' + esc(titleOf(s)) + '</h3>' +
+        '<div class="from">From the Secretary of ' + esc(s.project) + ' <span class="chip">' + esc(WORD[x.standing] || x.standing) + '</span>' +
+        (s.folder && s.folder !== s.project ? ' <span class="chip">folder ' + esc(s.folder) + '</span>' : '') + '</div>';
+      var link = linkFor(s);
+      if (x.standing === 'decision') {
+        html += '<div class="need"><div class="lbl" style="margin-top:0">Needs from you</div><div class="q">' + esc(x.need) + '</div><div class="opts">' +
+          (sm && sm.options.length ? sm.options.map(function (o) { return '<span class="opt">' + esc(o) + '</span>'; }).join('') : '') +
+          (link ? '<a class="opt link" href="' + esc(link) + '">Open in Claude ↗</a>' : '') + '</div>' +
+          '<div class="note">' + (sm && sm.options.length ? 'These are the session’s own answer buttons. ' : '') + 'You answer in the Claude app.</div></div>';
+      } else if (x.standing === 'working') {
+        html += '<div class="lbl">Working now</div><div class="text">' + esc(M.describe(s, now())) + '</div>';
+      } else {
+        html += '<div class="lbl">Needs from you</div><div class="text">' + esc(x.need || 'Nothing right now.') + (link ? ' <a class="opt link" href="' + esc(link) + '">Open in Claude ↗</a>' : '') + '</div>';
+      }
+      if (sm && sm.recap) html += '<div class="lbl">Done</div><div class="text">' + esc(sm.recap) + '</div>';
+      if (sm && sm.steps.length) {
+        var done = sm.steps.filter(function (st) { return st.status === 'completed'; }).length;
+        html += '<div class="lbl">Plan · ' + done + ' of ' + sm.stepsTotal + ' done</div><div class="steps">' +
+          sm.steps.map(function (st) { return '<div style="' + (st.status === 'in_progress' ? 'font-weight:600' : st.status === 'completed' ? 'color:#5f5e5a' : 'color:#8a8a80') + '"><i>' + MARK[st.status] + '</i><span>' + esc(st.name) + '</span></div>'; }).join('') +
+          (sm.stepsTotal > sm.steps.length ? '<div style="color:#8a8a80"><i>…</i><span>' + (sm.stepsTotal - sm.steps.length) + ' more</span></div>' : '') + '</div>';
+      } else if (s.steps) {
+        html += '<div class="lbl">Plan</div><div class="text">' + esc(M.stepLabel(s).replace(/ · $/, '')) + '</div>';
+      }
+      var evs = (s.events || []).slice(0, 8);   // the model lists events newest first
+      if (evs.length) html += '<div class="lbl">Activity</div><div class="act">' + evs.map(function (e) { return '<div><span>' + esc(ago(Date.parse(e.ts))) + '</span><span>' + esc(M.eventLine(e)) + '</span></div>'; }).join('') + '</div>';
+      html += '<div class="note" style="margin-top:12px">' + (s.host ? 'On ' + esc(s.host) + '. ' : '') + (sm ? 'Summary from ' + esc(ago(sm.turnAt || s.lastAt)) + ' ago.' : 'No summary from this session yet; terminal sessions send none.') + '</div></div>';
+      el.innerHTML = html;
+    } else if (sel.kind === 'dept' && sel.dept) {
+      var d = sel.dept;
+      el.innerHTML = '<div class="card"><h2>Department of ' + esc(d.name) + '</h2><div class="empty">Secretary and ' + d.staff.length + ' staff · ' +
+        (d.inOval ? 'the secretary is in the Oval Office' : 'the secretary is at their desk') + '</div>' +
+        d.staff.map(function (x) { return rowFor(x, x.standing === 'working' ? M.describe(x.s, now()) : (WORD[x.standing] || '') + (x.s.lastAt ? ' · ' + ago(x.s.lastAt) : '')); }).join('') + '</div>';
+      el.querySelectorAll('[data-k]').forEach(function (r) { r.onclick = function () { var x = staffByKey(r.getAttribute('data-k')); if (x) { sel = { kind: 'session', staff: x }; renderPanels(); } }; });
+    } else {
+      el.innerHTML = '<div class="card"><h2>Dossier</h2><div class="empty">Tap anyone in the building, an office, or an item on your desk to read it here.</div></div>';
+    }
+  }
+  function renderPanels() { renderDesk(); renderDossier(); $('brief').textContent = W.briefing(DEPTS, LISTS); }
+
+  // ── Data ──────────────────────────────────────────────────────────────────────
+  function render() {
+    var t = now();
+    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES, summaries: SUMMARIES });
+    DEPTS = W.buildDepartments(MODEL.sessions, t);
+    LISTS = W.deskLists(DEPTS, t);
+    LAY = W.layout(Math.min(DEPTS.length, W.OFFICES_MAX));
+    // Keep the selection pointing at the fresh objects.
+    if (sel.kind === 'session' && sel.staff) sel.staff = staffByKey(sel.staff.key) || null, sel = sel.staff ? sel : { kind: 'brief' };
+    if (sel.kind === 'dept' && sel.dept) { var dn = sel.dept.name; sel.dept = DEPTS.filter(function (d) { return d.name === dn; })[0] || null; if (!sel.dept) sel = { kind: 'brief' }; }
+    clampCam();
+    syncActors();
+    renderPanels();
+  }
+  function loadSummaries() {
+    fetch('/api/summaries').then(function (r) { return r.json(); }).then(function (map) { if (map && typeof map === 'object') { SUMMARIES = map; render(); } }).catch(function () {});
+  }
+  function loadLinks() {
+    fetch('/api/links').then(function (r) { return r.json(); }).then(function (map) { if (map && typeof map === 'object') { LINKS = map; renderPanels(); } }).catch(function () {});
+  }
+  var ES = null, retryTimer = null, offlineSince = null;
+  function setLive(state) {
+    var el = $('live');
+    el.className = 'live' + (state === 'on' ? '' : state === 'off' ? ' off' : ' wait');
+    $('liveLabel').textContent = state === 'on' ? 'Live' : state === 'off' ? 'Offline' : 'Connecting';
+    if (state === 'off' && offlineSince === null) offlineSince = now();
+    if (state === 'on') offlineSince = null;
+    showOffline();
+  }
+  function showOffline() {
+    var box = $('offline');
+    if (offlineSince === null || now() - offlineSince < 8000) { box.hidden = true; return; }
+    var a = lastUpdate ? M.rel(now() - lastUpdate) : null;
+    box.innerHTML = 'Can’t reach the computer running your sessions. It may be asleep, restarting or offline.' +
+      '<small>Showing what it last sent' + (a ? ' (' + (a === 'now' ? 'just now' : a + ' ago') + ')' : '') + '. This reconnects on its own.</small>';
+    box.hidden = false;
+  }
+  function connect() {
+    if (ES) { try { ES.close(); } catch (_) {} }
+    ES = new EventSource('/api/stream');
+    ES.onopen = function () { setLive('on'); loadLinks(); loadSummaries(); };
+    ES.onmessage = function (m) {
+      try { EVENTS = JSON.parse(m.data) || []; } catch (_) { return; }
+      lastUpdate = now(); setLive('on'); render(); loadSummaries();
+    };
+    ES.onerror = function () {
+      setLive('off');
+      if (ES.readyState === 2 && !retryTimer) retryTimer = setTimeout(function () { retryTimer = null; connect(); }, 5000);
+    };
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    if (!ES || ES.readyState === 2 || offlineSince !== null) connect();
+    render();
+  });
+  window.addEventListener('online', function () { connect(); });
+
+  fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
+    if (cfg && cfg.title) $('brandTitle').textContent = cfg.title;
+    if (cfg && typeof cfg.booted_at === 'number') BOOTED_AT = cfg.booted_at * 1000;
+    if (cfg && cfg.project_names) NAMES = cfg.project_names;
+    render();
+  }).catch(function () {});
+  fetch('/api/events').then(function (r) { return r.json(); }).then(function (evs) { EVENTS = evs || []; lastUpdate = now(); render(); }).catch(function () { setLive('off'); });
+  draw();
+  loadSkin().then(function () { render(); requestAnimationFrame(loop); });
+  connect();
+  loadLinks(); loadSummaries();
+  setInterval(function () { render(); showOffline(); }, 15000);
+  setInterval(loadLinks, 60000);
+  setInterval(loadSummaries, 30000);
+})();
+</script>
+</body>
+</html>

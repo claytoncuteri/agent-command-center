@@ -52,9 +52,10 @@ _DEFAULTS: dict = {
     # Where Revise+Submit decisions are logged (separate from the event stream).
     "corrections_file": "./corrections.jsonl",
     "telegram": None,
-    # Which page "/" serves: "sessions" (one row per session, needs-you first)
-    # or "classic" (agent cards and the approvals workflow). Both stay reachable
-    # at /sessions and /classic.
+    # Which page "/" serves: "sessions" (one row per session, needs-you first),
+    # "whitehouse" (the pixel-art building: one office per project, decisions
+    # walked to the President's desk) or "classic" (agent cards and the
+    # approvals workflow). All stay reachable at /sessions, /whitehouse and /classic.
     "view": "sessions",
     # Friendly project names: {"Projects/Orion": "Orion", "orion-*": "Orion"}.
     # A key with a slash is a folder under home (and everything inside it);
@@ -79,7 +80,7 @@ _DEFAULTS: dict = {
     "touch_icon": None,
 }
 
-_VIEWS = {"sessions": "sessions.html", "classic": "index.html"}
+_VIEWS = {"sessions": "sessions.html", "classic": "index.html", "whitehouse": "whitehouse.html"}
 
 _ACTION_MODES = {"readonly", "browser", "telegram", "both"}
 # Modes in which the in-browser write-back endpoint is live.
@@ -918,7 +919,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def page_for(path: str) -> str:
-    """The static page a browser path maps to: /classic, /sessions, else the default view."""
+    """The static page a browser path maps to: /classic, /sessions, /whitehouse, else the default view."""
     first = path.strip("/").split("/", 1)[0]
     if first in _VIEWS:
         return _VIEWS[first]
