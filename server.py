@@ -914,8 +914,17 @@ async def api_stream(request: Request) -> StreamingResponse:
     )
 
 
+class _RevalidatedStatic(StaticFiles):
+    """Static files the browser re-checks on every load (a 304 when unchanged), so an update shows at once."""
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
 # Serve the SPA and static assets
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+app.mount("/static", _RevalidatedStatic(directory=str(STATIC_DIR)), name="static")
 
 
 def page_for(path: str) -> str:
@@ -930,7 +939,7 @@ def page_for(path: str) -> str:
 def spa_fallback(full_path: str) -> FileResponse:
     page = STATIC_DIR / page_for(full_path)
     if page.exists():
-        return FileResponse(str(page))
+        return FileResponse(str(page), headers={"Cache-Control": "no-cache"})
     raise HTTPException(status_code=404, detail=f"{page.name} not found in static/")
 
 

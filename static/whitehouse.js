@@ -16,6 +16,7 @@
   var OFFICES_MAX = 16;       // drawn offices; the rest are listed in the Annex
   var DESKS_PER_OFFICE = 4;   // drawn staffers per office; the panel lists them all
   var TODAY_MS = 24 * 60 * 60 * 1000;
+  var RECENT_MS = TODAY_MS;   // staff quiet longer than this keep no desk; offices with none go to the Annex
 
   // A session's standing in the building.
   //   decision: a permission or question is open, or its last turn ended with a question
@@ -62,7 +63,8 @@
       var name = s.project || s.folder || 'Unknown';
       var d = byName[name] = byName[name] || { name: name, staff: [], decisions: 0, updates: 0, working: 0, idle: 0 };
       var st = standing(s);
-      d.staff.push({ key: s.key, session: s.session, title: s.title, standing: st, need: need(s), s: s });
+      var recent = st !== 'idle' || now - (s.lastAt || 0) <= RECENT_MS;
+      d.staff.push({ key: s.key, session: s.session, title: s.title, standing: st, need: need(s), recent: recent, s: s });
       if (st === 'decision') d.decisions += 1;
       else if (st === 'update') d.updates += 1;
       else if (st === 'working') d.working += 1;
@@ -86,7 +88,16 @@
       var x = a.name.toLowerCase(), y = b.name.toLowerCase();
       return x < y ? -1 : x > y ? 1 : 0;
     });
-    list.forEach(function (d, i) { d.index = i; d.drawn = i < OFFICES_MAX; d.desks = Math.min(d.staff.length, DESKS_PER_OFFICE); });
+    // Desks go to staff active in the last day (idle ones sort last, so the
+    // drawn desks are the recent ones). An office with nobody recent and no
+    // decision is not drawn; the Annex lists it and the panels keep everyone.
+    var slot = 0;
+    list.forEach(function (d) {
+      d.active = d.staff.filter(function (x) { return x.recent; }).length;
+      d.desks = Math.min(d.active, DESKS_PER_OFFICE);
+      d.drawn = (d.active > 0 || d.inOval) && slot < OFFICES_MAX;
+      d.index = d.drawn ? slot++ : -1;
+    });
     return list;
   }
 
@@ -151,7 +162,7 @@
 
   return {
     standing: standing, need: need, finishedToday: finishedToday,
-    buildDepartments: buildDepartments, deskLists: deskLists, briefing: briefing, layout: layout,
+    buildDepartments: buildDepartments, drawnCount: function (deps) { return (deps || []).filter(function (d) { return d.drawn; }).length; }, deskLists: deskLists, briefing: briefing, layout: layout,
     OFFICES_MAX: OFFICES_MAX, DESKS_PER_OFFICE: DESKS_PER_OFFICE
   };
 }));

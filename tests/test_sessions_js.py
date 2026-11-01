@@ -131,6 +131,21 @@ class TestSessionModel(unittest.TestCase):
         self.assertEqual(s["state"], "quiet")
         self.assertIn("silent 24m", s["line"])
 
+    def test_quiet_for_two_hours_is_a_cut_off_turn_not_work(self):
+        # An interrupted turn never sends Stop, so without this it would stay
+        # "Working, may be stuck" forever and count as at work.
+        out = self.derive([
+            ev(3 * 60, "started", "Working", doing="Running a command", session="old"),
+            ev(119, "started", "Working", doing="Editing files", session="edge"),
+        ])
+        by = {s["session"]: s for s in out["sessions"]}
+        self.assertEqual(by["old"]["state"], "idle")
+        self.assertTrue(by["old"]["interrupted"])
+        self.assertEqual(by["old"]["line"], "Stopped mid-turn, probably interrupted · open it to carry on")
+        self.assertEqual(by["edge"]["state"], "quiet", "under two hours it may still be running")
+        self.assertEqual(out["counts"]["work"], 1)
+        self.assertEqual(out["counts"]["idle"], 1)
+
     def test_your_turn_with_turn_duration(self):
         s = self.one([
             ev(12, "started", "Working", doing="Thinking"),

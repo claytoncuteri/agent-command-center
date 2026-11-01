@@ -26,10 +26,11 @@ if (input.summaries) opts.summaries = input.summaries;
 const sessions = S.deriveSessions(input.events, now, opts).sessions;
 const deps = W.buildDepartments(sessions, now);
 const lists = W.deskLists(deps, now);
-const strip = x => ({ title: x.title, session: x.session, standing: x.standing, need: x.need, project: x.s.project });
+const strip = x => ({ title: x.title, session: x.session, standing: x.standing, need: x.need, project: x.s.project, recent: x.recent });
 process.stdout.write(JSON.stringify({
   departments: deps.map(d => ({ name: d.name, decisions: d.decisions, updates: d.updates, working: d.working,
-    idle: d.idle, inOval: d.inOval, drawn: d.drawn, desks: d.desks, staff: d.staff.map(strip) })),
+    idle: d.idle, inOval: d.inOval, drawn: d.drawn, desks: d.desks, index: d.index, active: d.active,
+    staff: d.staff.map(strip) })),
   lists: { decisions: lists.decisions.map(strip), updates: lists.updates.map(strip), finished: lists.finished.map(strip) },
   briefing: W.briefing(deps, lists),
   layout: W.layout(input.count === undefined ? deps.length : input.count),
@@ -157,6 +158,28 @@ class TestBuilding(unittest.TestCase):
         self.assertEqual(sum(1 for d in out["departments"] if not d["drawn"]), 4)
         self.assertEqual(self.dept(out, "P00")["desks"], 4)
         self.assertEqual(len(self.dept(out, "P00")["staff"]), 7)
+
+    def test_cut_off_turns_are_not_at_work(self):
+        out = self.run_model([ev(72 * 60, "started", "Working", session="g1", agent="Orion"),
+                              ev(1, "started", "Working", session="w1", agent="Vega")])
+        self.assertEqual(self.dept(out, "Orion")["working"], 0)
+        self.assertIn("1 staff is at work", out["briefing"])
+
+    def test_only_recent_staff_get_desks_and_quiet_offices_go_to_the_annex(self):
+        out = self.run_model([
+            ev(1, "started", "Working", session="a1", agent="Alpha"),
+            ev(50 * 60, "finished", "Your turn", session="a2", agent="Alpha"),
+            ev(50 * 60, "finished", "Your turn", session="b1", agent="Beta"),
+            ev(2, "finished", "Your turn", session="c1", agent="Gamma"),
+        ])
+        alpha, beta, gamma = (self.dept(out, n) for n in ("Alpha", "Beta", "Gamma"))
+        self.assertEqual([x["session"] for x in alpha["staff"]], ["a1", "a2"], "the panel still lists everyone")
+        self.assertEqual([x["recent"] for x in alpha["staff"]], [True, False])
+        self.assertEqual((alpha["active"], alpha["desks"]), (1, 1))
+        self.assertFalse(beta["drawn"], "nothing in a day: the Annex")
+        self.assertEqual(beta["index"], -1)
+        # Drawn offices take the layout's slots in order, skipping the Annex.
+        self.assertEqual([(d["name"], d["index"]) for d in out["departments"] if d["drawn"]], [("Alpha", 0), ("Gamma", 1)])
 
     def test_quiet_briefing(self):
         out = self.run_model([ev(1, "started", "Working", session="w1", agent="Orion")])

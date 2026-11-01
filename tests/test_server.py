@@ -298,7 +298,15 @@ class TestRealAppThroughGate(unittest.TestCase):
             asyncio.run(server.app(scope, receive, send))
         finally:
             server.CONFIG["remote_clients"] = prev
+        self.last_headers = dict(next(m.get("headers", []) for m in sent if m["type"] == "http.response.start"))
         return next(m["status"] for m in sent if m["type"] == "http.response.start")
+
+    def test_static_files_revalidate(self):
+        # Without this a browser can keep an old sessions.js for hours after an update.
+        local = [(b"host", b"127.0.0.1:7070")]
+        for path in ("/static/sessions.js", "/static/whitehouse.js", "/whitehouse", "/sessions"):
+            self.assertEqual(self.call(path, local), 200)
+            self.assertEqual(self.last_headers.get(b"cache-control"), b"no-cache", path)
 
     def test_other_device_refused_everywhere(self):
         mini = [(b"host", b"dash.example-tailnet.ts.net"), (b"x-forwarded-for", b"100.64.0.20"),

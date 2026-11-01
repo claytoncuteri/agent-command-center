@@ -18,6 +18,7 @@
   var MIN = 60 * 1000;
   var HOUR = 60 * MIN;
   var QUIET_AFTER = 10 * MIN;     // working but silent this long: may be stuck
+  var CUT_OFF_AFTER = 2 * HOUR;   // working but silent this long: the turn was cut off
   var IDLE_AFTER = 6 * HOUR;      // "your turn" older than this counts as idle
   var CLOSED_WINDOW = 24 * HOUR;  // closed sessions older than this are dropped
   var BAR_SLOTS = 12;             // activity bar: 12 slots of 5 minutes
@@ -311,6 +312,17 @@
         s.since = lastT;
       }
 
+      // An interrupted turn (you pressed stop, closed the window, the Mac
+      // slept) never sends Stop, so it would show as Working, "may be stuck",
+      // forever. Silent this long, it was cut off: idle, not at work.
+      if ((s.state === 'work' || s.state === 'quiet') && now - lastT > CUT_OFF_AFTER) {
+        s.interruptedFrom = 'silence';
+        s.state = 'idle';
+        s.interrupted = true;
+        s.pausing = false;
+        s.since = lastT;
+      }
+
       // Activity bar over the last hour, oldest slot first.
       var start = now - BAR_SLOTS * BAR_SLOT;
       for (var i = 0; i < BAR_SLOTS; i++) s.bars.push('');
@@ -408,6 +420,7 @@
           (s.steps && s.steps.done < s.steps.total ? ' \u00b7 ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '') +
           ' \u00b7 send a message to resume';
       case 'idle':
+        if (s.interrupted && s.interruptedFrom === 'silence') return 'Stopped mid-turn, probably interrupted · open it to carry on';
         if (s.interrupted) {
           return (s.interruptedFrom === 'need' ? 'Was waiting on you' : 'Was working') +
             ' when the computer restarted · open it to carry on';
@@ -457,6 +470,6 @@
   return {
     deriveSessions: deriveSessions, cleanSummary: cleanSummary, describe: describe, projectName: projectName, compileNames: compileNames, eventLine: eventLine,
     rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel, limitLabel: limitLabel,
-    QUIET_AFTER: QUIET_AFTER, IDLE_AFTER: IDLE_AFTER
+    QUIET_AFTER: QUIET_AFTER, CUT_OFF_AFTER: CUT_OFF_AFTER, IDLE_AFTER: IDLE_AFTER
   };
 }));

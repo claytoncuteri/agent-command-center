@@ -314,9 +314,9 @@ h1, h2, h3 { font-family: "Space Grotesk", Inter, sans-serif; margin: 0; }
       ring(home.x, home.y + 2, d.decisions ? RING.decision : RING.working);
       hits.push({ kind: 'dept', x: home.x - 12, y: home.y - 32, w: 24, h: 36, dept: d });
     } else if (a) {
-      g.fillStyle = '#5f5e5a'; g.font = '10px Inter'; g.textAlign = 'center'; g.fillText('In the Oval', home.x, home.y - 14);
+      label(home.x, home.y - 22, 'In the Oval');   // a plate, so it reads over the bookshelf
     }
-    if (d.staff.length > d.desks) label(b.x + b.w - 26, b.y + b.h - 22, '+' + (d.staff.length - d.desks));
+    if (d.active > d.desks) label(b.x + b.w - 26, b.y + b.h - 22, '+' + (d.active - d.desks));
     // Door and nameplate on the corridor side.
     var dr = officeDoor(o);
     if (o.door === 'bottom') { rect(dr.x - 12, dr.y - 3, 24, 4, '#d6cdb8'); label(dr.x, dr.y - 20, d.name, d.inOval); }
@@ -505,7 +505,7 @@ h1, h2, h3 { font-family: "Space Grotesk", Inter, sans-serif; margin: 0; }
     html += '<div class="sec"><span class="n">' + L.finished.length + '</span>Finished today</div>' +
       (L.finished.length ? L.finished.slice(0, 8).map(function (x) { return rowFor(x, ago(x.s.summary.turnAt || x.s.lastAt)); }).join('') : '<div class="empty">Nothing finished today yet.</div>');
     var annex = DEPTS.filter(function (d) { return !d.drawn; });
-    if (annex.length) html += '<div class="sec">Annex (not drawn)</div>' + annex.map(function (d) { return '<div class="row" data-d="' + esc(d.name) + '"><span class="who"><span class="t">' + esc(d.name) + '</span></span><span class="ago">' + d.staff.length + ' session' + (d.staff.length === 1 ? '' : 's') + '</span></div>'; }).join('');
+    if (annex.length) html += '<div class="sec">Annex: not in the building</div>' + annex.map(function (d) { return '<div class="row" data-d="' + esc(d.name) + '"><span class="who"><span class="t">' + esc(d.name) + '</span></span><span class="ago">' + d.staff.length + ' session' + (d.staff.length === 1 ? '' : 's') + '</span></div>'; }).join('');
     $('desk').innerHTML = html;
     $('desk').querySelectorAll('[data-k]').forEach(function (el) { el.onclick = function () { var x = staffByKey(el.getAttribute('data-k')); if (x) { sel = { kind: 'session', staff: x }; renderPanels(); } }; });
     $('desk').querySelectorAll('[data-d]').forEach(function (el) { el.onclick = function () { var d = DEPTS.filter(function (q) { return q.name === el.getAttribute('data-d'); })[0]; if (d) { sel = { kind: 'dept', dept: d }; renderPanels(); } }; });
@@ -563,7 +563,7 @@ h1, h2, h3 { font-family: "Space Grotesk", Inter, sans-serif; margin: 0; }
     MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES, summaries: SUMMARIES });
     DEPTS = W.buildDepartments(MODEL.sessions, t);
     LISTS = W.deskLists(DEPTS, t);
-    LAY = W.layout(Math.min(DEPTS.length, W.OFFICES_MAX));
+    LAY = W.layout(W.drawnCount(DEPTS));
     // Keep the selection pointing at the fresh objects.
     if (sel.kind === 'session' && sel.staff) sel.staff = staffByKey(sel.staff.key) || null, sel = sel.staff ? sel : { kind: 'brief' };
     if (sel.kind === 'dept' && sel.dept) { var dn = sel.dept.name; sel.dept = DEPTS.filter(function (d) { return d.name === dn; })[0] || null; if (!sel.dept) sel = { kind: 'brief' }; }
