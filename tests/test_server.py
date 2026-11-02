@@ -480,11 +480,13 @@ class TestClaudeAppLinks(unittest.TestCase):
         self.dir = self.root / "acct" / "org"
         self.dir.mkdir(parents=True)
         server._links_cache.update({"at": 0.0, "root": None, "links": {}})
+        server._record_cache.clear()
         self.t = 1_000_000.0
 
     def tearDown(self):
         self.tmp.cleanup()
         server._links_cache.update({"at": 0.0, "root": None, "links": {}})
+        server._record_cache.clear()
 
     def record(self, name, body):
         path = self.dir / name
@@ -526,6 +528,29 @@ class TestClaudeAppLinks(unittest.TestCase):
                          (None, None, None))
         self.assertEqual((links["sma11num"]["focused_at"], links["sma11num"]["model"]), (None, None),
                          "seconds, not milliseconds; a name longer than 40 characters")
+
+    def test_unchanged_records_are_not_parsed_again(self):
+        # The app's records run to hundreds of kilobytes each; parsing all of
+        # them every few seconds starved the server. Only a changed one is read.
+        path = self.record("local_a.json", {"sessionId": "local_aaaaaaaa-1111", "cliSessionId": "cached01-1", "model": "one"})
+        self.assertEqual(self.links()["cached01"]["model"], "one")
+        real_load = server.json.load
+        loads = []
+        with mock.patch.object(server.json, "load", side_effect=lambda f: loads.append(1) or real_load(f)):
+            self.assertEqual(self.links()["cached01"]["model"], "one")
+            self.assertEqual(loads, [], "nothing changed, nothing parsed")
+            path.write_text(json.dumps({"sessionId": "local_aaaaaaaa-1111", "cliSessionId": "cached01-1", "model": "two"}))
+            os.utime(path, ns=(2_000_000_000_000_000_000, 2_000_000_000_000_000_000))
+            self.assertEqual(self.links()["cached01"]["model"], "two")
+            self.assertEqual(len(loads), 1, "the changed record was parsed once")
+        self.assertIsNot(self.links()["cached01"], self.links()["cached01"], "callers get copies, not the cache")
+
+    def test_a_removed_record_leaves_the_links_and_the_cache(self):
+        path = self.record("local_b.json", {"sessionId": "local_bbbbbbbb-2222", "cliSessionId": "remove01-1"})
+        self.assertIn("remove01", self.links())
+        path.unlink()
+        self.assertNotIn("remove01", self.links())
+        self.assertEqual(server._record_cache, {})
 
     def test_archived_passes_only_as_a_true_boolean(self):
         self.record("local_arch.json", {"sessionId": "local_11111111-aaaa", "cliSessionId": "a2ch1ved-1", "isArchived": True})

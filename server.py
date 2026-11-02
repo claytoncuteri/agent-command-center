@@ -374,6 +374,11 @@ _APP_RECORD_MAX_BYTES = 2_000_000
 # Short, so the focus view notices a switch between sessions within seconds.
 _LINKS_TTL_SECONDS = 5.0
 _links_cache: dict = {"at": 0.0, "root": None, "links": {}}
+# Per record: path -> ((mtime_ns, size), (key, link) or None). The app's records
+# run to hundreds of kilobytes each and most never change, so a record is
+# parsed again only when its size or modification time moves; an unchanged
+# pass costs one stat per record.
+_record_cache: dict = {}
 
 
 def _plain_word(value) -> Optional[str]:
@@ -400,6 +405,7 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
         return _links_cache["links"]
     links: dict = {}
     newest: dict = {}
+    seen: set = set()
     try:
         records = list(root.glob("*/*/local_*.json"))
     except OSError:
@@ -407,37 +413,58 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
     for path in records:
         try:
             st = path.stat()
-            if st.st_size > _APP_RECORD_MAX_BYTES:
-                continue
-            with path.open(encoding="utf-8") as f:
-                rec = json.load(f)
-        except (OSError, ValueError):
+        except OSError:
             continue
-        if not isinstance(rec, dict):
+        name = str(path)
+        seen.add(name)
+        signature = (st.st_mtime_ns, st.st_size)
+        cached = _record_cache.get(name)
+        if cached is not None and cached[0] == signature:
+            entry = cached[1]
+        else:
+            entry = _read_app_record(path, st.st_size)
+            _record_cache[name] = (signature, entry)
+        if entry is None:
             continue
-        app_id, cli_id = rec.get("sessionId"), rec.get("cliSessionId")
-        if not (isinstance(app_id, str) and _APP_ID.match(app_id)):
-            continue
-        if not (isinstance(cli_id, str) and len(cli_id) >= 8):
-            continue
-        key = cli_id[:8]
+        key, link = entry
         # Two app records for one Claude Code session (a fork): keep the newest.
         if key in newest and newest[key] >= st.st_mtime:
             continue
         newest[key] = st.st_mtime
-        bridge = rec.get("bridgeSessionIds")
-        # The newest Remote Control id is the last in the list.
-        web_ids = [b for b in bridge if isinstance(b, str) and _BRIDGE_ID.match(b)] if isinstance(bridge, list) else []
-        links[key] = {
-            "app": "claude://claude.ai/epitaxy/" + app_id,
-            "web": ("https://claude.ai/code/" + web_ids[-1]) if web_ids else None,
-            "focused_at": _epoch_ms(rec.get("lastFocusedAt")),
-            "model": _plain_word(rec.get("model")),
-            "effort": _plain_word(rec.get("effort")),
-            "archived": rec.get("isArchived") is True,
-        }
+        links[key] = dict(link)
+    for name in [n for n in _record_cache if n not in seen]:
+        del _record_cache[name]
     _links_cache.update({"at": now, "root": str(root), "links": links})
     return links
+
+
+def _read_app_record(path: pathlib.Path, size: int):
+    """(key, link) from one app record, or None when it is not one we can use."""
+    if size > _APP_RECORD_MAX_BYTES:
+        return None
+    try:
+        with path.open(encoding="utf-8") as f:
+            rec = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(rec, dict):
+        return None
+    app_id, cli_id = rec.get("sessionId"), rec.get("cliSessionId")
+    if not (isinstance(app_id, str) and _APP_ID.match(app_id)):
+        return None
+    if not (isinstance(cli_id, str) and len(cli_id) >= 8):
+        return None
+    bridge = rec.get("bridgeSessionIds")
+    # The newest Remote Control id is the last in the list.
+    web_ids = [b for b in bridge if isinstance(b, str) and _BRIDGE_ID.match(b)] if isinstance(bridge, list) else []
+    return cli_id[:8], {
+        "app": "claude://claude.ai/epitaxy/" + app_id,
+        "web": ("https://claude.ai/code/" + web_ids[-1]) if web_ids else None,
+        "focused_at": _epoch_ms(rec.get("lastFocusedAt")),
+        "model": _plain_word(rec.get("model")),
+        "effort": _plain_word(rec.get("effort")),
+        "archived": rec.get("isArchived") is True,
+    }
 
 
 @app.get("/api/links")
