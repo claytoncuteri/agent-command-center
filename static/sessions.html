@@ -291,7 +291,7 @@ button { font: inherit; color: inherit; }
   var EVENTS = [];
   var BOOTED_AT = null;  // ms; when the machine running the sessions last started
   var NAMES = null;      // config project_names: folder -> friendly project name
-  var LINKS = {};   // session (8 chars) -> {app, web} links, when claude_app_links is on
+  var LINKS = {};   // session (8 chars) -> {app, web, archived, ...}, when claude_app_links is on
   // On this computer, open the desktop app; from a phone or another device,
   // open the session's Remote Control page on claude.ai (the app link would
   // only reach the phone app's home screen).
@@ -409,7 +409,7 @@ button { font: inherit; color: inherit; }
 
   function render() {
     var t = now();
-    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES });
+    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES, links: LINKS });
     var all = MODEL.sessions;
     // Tile counts follow the project filter, so a number always matches its list.
     var inProject = all.filter(function (s) { return !ui.project || s.project === ui.project; });

@@ -100,9 +100,9 @@ class TestFocusModel(unittest.TestCase):
         self.assertEqual(out["focus"], "b")
 
     def test_pinned_wins_while_listed(self):
-        out = self.run_model([prompt(30, "a"), prompt(2, "b")], pinned="mac|a")
+        out = self.run_model([prompt(30, "a"), prompt(2, "b")], pinned="s|a")
         self.assertEqual(out["focus"], "a")
-        out = self.run_model([prompt(30, "a"), prompt(2, "b")], pinned="mac|gone")
+        out = self.run_model([prompt(30, "a"), prompt(2, "b")], pinned="s|gone")
         self.assertEqual(out["focus"], "b", "a pin to a session that is not listed is ignored")
 
     def test_without_signals_the_most_urgent_session_wins(self):

@@ -360,7 +360,9 @@ def api_config() -> JSONResponse:
 # when Remote Control is on; it gives a claude.ai link that opens the same
 # session on a phone or another computer. Three more fields feed the focus view:
 # `lastFocusedAt` (when the app last showed the session, epoch ms), `model` and
-# `effort`. Nothing else is read or returned: no title, folder, prompt or text.
+# `effort`; `isArchived` lets the pages drop a session the app has archived, since
+# archiving sends no stop event. Nothing else is read or returned: no title,
+# folder, prompt or text.
 
 APP_SESSIONS_DIR = (
     pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
@@ -389,7 +391,8 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
     """
     Map the event stream's 8-character session id to its app record's facts:
     {"app": "claude://...", "web": "https://claude.ai/code/session_..." or None,
-     "focused_at": epoch ms or None, "model": str or None, "effort": str or None}.
+     "focused_at": epoch ms or None, "model": str or None, "effort": str or None,
+     "archived": bool}.
     """
     root = pathlib.Path(root) if root is not None else APP_SESSIONS_DIR
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
@@ -431,6 +434,7 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
             "focused_at": _epoch_ms(rec.get("lastFocusedAt")),
             "model": _plain_word(rec.get("model")),
             "effort": _plain_word(rec.get("effort")),
+            "archived": rec.get("isArchived") is True,
         }
     _links_cache.update({"at": now, "root": str(root), "links": links})
     return links

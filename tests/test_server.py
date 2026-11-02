@@ -503,7 +503,7 @@ class TestClaudeAppLinks(unittest.TestCase):
         })
         self.assertEqual(self.links(), {"444e0301": {
             "app": "claude://claude.ai/epitaxy/local_1f9b14d8-71c3-4861-9f20-2068589d2c2d", "web": None,
-            "focused_at": None, "model": None, "effort": None}})
+            "focused_at": None, "model": None, "effort": None, "archived": False}})
 
     def test_focus_model_and_effort_pass_only_when_plain(self):
         self.record("local_focus.json", {
@@ -526,6 +526,13 @@ class TestClaudeAppLinks(unittest.TestCase):
                          (None, None, None))
         self.assertEqual((links["sma11num"]["focused_at"], links["sma11num"]["model"]), (None, None),
                          "seconds, not milliseconds; a name longer than 40 characters")
+
+    def test_archived_passes_only_as_a_true_boolean(self):
+        self.record("local_arch.json", {"sessionId": "local_11111111-aaaa", "cliSessionId": "a2ch1ved-1", "isArchived": True})
+        self.record("local_open.json", {"sessionId": "local_22222222-bbbb", "cliSessionId": "0pen0pen-2", "isArchived": False})
+        self.record("local_odd.json", {"sessionId": "local_33333333-cccc", "cliSessionId": "0ddva1ue-3", "isArchived": "yes"})
+        links = self.links()
+        self.assertEqual([links[k]["archived"] for k in ("a2ch1ved", "0pen0pen", "0ddva1ue")], [True, False, False])
 
     def test_remote_control_id_gives_web_link(self):
         self.record("local_x.json", {

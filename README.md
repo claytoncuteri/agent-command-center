@@ -46,7 +46,7 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 |---|---|---|
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
-| `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app, and let the [focus view](#the-focus-view) follow the session the app has in front. Reads five fields of the app's per-session records: `sessionId`, `cliSessionId`, `lastFocusedAt`, `model` and `effort`. |
+| `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app, and let the [focus view](#the-focus-view) follow the session the app has in front. Reads six fields of the app's per-session records: `sessionId`, `cliSessionId`, `lastFocusedAt`, `model`, `effort` and `isArchived` (an archived session drops off the dashboard, since archiving sends no stop event). |
 | `turn_summaries` | `false` | Serve the hook's opt-in turn summaries at `/api/summaries`: each session's step names and its end-of-turn recap, question and button labels. Needs `ACC_SUMMARIES=1` on the hook. See [Turn summaries](#turn-summaries-opt-in). |
 | `summaries_dir` | `null` | Where the hook keeps the summary files. `null` means the `state` folder beside the first event file, which is where the hook writes them by default. |
 | `remote_clients` | `[]` | Tailnet (or LAN) addresses allowed to view the dashboard through a local reverse proxy such as `tailscale serve`. Empty means no remote viewers. See [Viewing from your phone](#viewing-from-your-phone). |
@@ -361,7 +361,8 @@ step. Only the steps' status values are read, never their text.
 **The session view** (`/`, the default) shows one row per session, sorted by
 urgency: *Blocked* (a permission prompt or question, oldest first, with how
 long it has waited), *Working* (what it is doing now, in plain words; a session
-silent for 10 minutes turns red as possibly stuck), *Ready for you* (finished,
+silent for 10 minutes turns red as possibly stuck, and one silent for an hour
+is taken as cut off and goes to *Idle*), *Ready for you* (finished,
 waiting for your next message), then *Idle* and *Closed today* folded away. Tap
 a row for a plain-language timeline. It is built for a phone first and reads
 the same event stream; the original page stays at `/classic`.

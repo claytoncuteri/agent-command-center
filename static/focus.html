@@ -418,7 +418,7 @@ a { color: inherit; }
 
   function render() {
     var t = now();
-    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES, summaries: SUMMARIES });
+    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES, summaries: SUMMARIES, links: LINKS });
     var key = F.pickFocus(MODEL.sessions, LINKS, pinned);
     if (pinned && key !== pinned) pinned = null;  // the pinned session closed
     FOCUS = MODEL.sessions.filter(function (x) { return x.key === key; })[0] || null;

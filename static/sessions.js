@@ -18,6 +18,7 @@
   var MIN = 60 * 1000;
   var HOUR = 60 * MIN;
   var QUIET_AFTER = 10 * MIN;     // working but silent this long: may be stuck
+  var GONE_AFTER = 60 * MIN;      // working or failed and silent this long: it was cut off
   var IDLE_AFTER = 6 * HOUR;      // "your turn" older than this counts as idle
   var CLOSED_WINDOW = 24 * HOUR;  // closed sessions older than this are dropped
   var BAR_SLOTS = 12;             // activity bar: 12 slots of 5 minutes
@@ -30,8 +31,12 @@
     return isNaN(t) ? null : t;
   }
 
+  // One record per session. A session is keyed by its id alone: the host label
+  // can change under a running session (a Mac's hostname follows the network it
+  // joins), and keying on it split one session into two, the older half stuck
+  // in Blocked. Events without a session id are grouped by host and agent.
   function keyOf(e) {
-    return (e.host || '') + '|' + (e.session || e.agent || 'unknown');
+    return e.session ? 's|' + e.session : (e.host || '') + '|' + (e.agent || 'unknown');
   }
 
   // Friendly project names from the config's project_names, short to type:
@@ -160,9 +165,12 @@
   // opts.bootedAt (ms): when the machine running the sessions last started, if known.
   // opts.names: the config's project_names (see compileNames).
   // opts.summaries: /api/summaries, session id (8 chars) -> its latest turn summary.
+  // opts.links: /api/links, session id -> the app's record; one marked archived
+  //   is treated as closed whatever its last event said.
   function deriveSessions(events, now, opts) {
     now = typeof now === 'number' ? now : Date.now();
     var bootedAt = opts && typeof opts.bootedAt === 'number' ? opts.bootedAt : null;
+    var links = opts && opts.links && typeof opts.links === 'object' && !Array.isArray(opts.links) ? opts.links : {};
     var rules = compileNames(opts && opts.names);
     var summaries = opts && opts.summaries && typeof opts.summaries === 'object' && !Array.isArray(opts.summaries)
       ? opts.summaries : {};
@@ -306,7 +314,27 @@
       if (bootedAt && lastT < bootedAt && (s.state === 'need' || s.state === 'work' || s.state === 'quiet')) {
         s.interruptedFrom = s.state;
         s.state = 'idle';
-        s.interrupted = true;
+        s.interrupted = 'restart';
+        s.ask = null;
+        s.since = lastT;
+      }
+
+      // A session that was working, or had just failed, and then sent nothing
+      // for an hour is not stuck: it was closed or killed before its stop event
+      // could go out (the app quit, the session was stopped). Blocked sessions
+      // are not touched: an open ask can rightly wait all night.
+      if (now - lastT > GONE_AFTER && (s.state === 'work' || s.state === 'quiet' || s.state === 'error')) {
+        s.interruptedFrom = s.state;
+        s.state = 'idle';
+        s.interrupted = 'silence';
+        s.since = lastT;
+      }
+
+      // The desktop app says the session is archived: it is over, whatever its
+      // last event said (an archive sends no stop event).
+      if (s.session && links[s.session] && links[s.session].archived === true && s.state !== 'closed') {
+        s.state = 'closed';
+        s.archived = true;
         s.ask = null;
         s.since = lastT;
       }
@@ -409,11 +437,13 @@
           ' \u00b7 send a message to resume';
       case 'idle':
         if (s.interrupted) {
-          return (s.interruptedFrom === 'need' ? 'Was waiting on you' : 'Was working') +
-            ' when the computer restarted · open it to carry on';
+          var was = s.interruptedFrom === 'need' ? 'Was waiting on you'
+            : s.interruptedFrom === 'error' ? 'Had failed' : 'Was working';
+          if (s.interrupted === 'silence') return was + ', then nothing for ' + dur(now - s.lastAt) + ' · open it to carry on';
+          return was + ' when the computer restarted · open it to carry on';
         }
         return 'Last: ' + (s.lastAction || 'activity').toLowerCase();
-      case 'closed': return 'Closed';
+      case 'closed': return s.archived ? 'Archived' : 'Closed';
     }
     return '';
   }

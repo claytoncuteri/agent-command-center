@@ -1034,5 +1034,43 @@ class TestProcess(unittest.TestCase):
         self.assertEqual(proc.stdout, "")
 
 
+class TestHostLabel(unittest.TestCase):
+    """The host label: ACC_HOST, else the Mac's local hostname, else the kernel's."""
+
+    def plist(self, body):
+        import plistlib
+        path = os.path.join(self.tmp.name, "preferences.plist")
+        with open(path, "wb") as f:
+            plistlib.dump(body, f)
+        return path
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_override_wins(self):
+        path = self.plist({"System": {"Network": {"HostNames": {"LocalHostName": "Stable-Name"}}}})
+        with mock.patch.dict(os.environ, {"ACC_HOST": "override", "ACC_MAC_PREFS": path}):
+            self.assertEqual(hook._host(), "override")
+
+    def test_mac_local_hostname_beats_the_kernel_hostname(self):
+        path = self.plist({"System": {"Network": {"HostNames": {"LocalHostName": "Stable-Name"}}}})
+        with mock.patch.dict(os.environ, {"ACC_MAC_PREFS": path}, clear=False):
+            os.environ.pop("ACC_HOST", None)
+            with mock.patch.object(hook.socket, "gethostname", return_value="Mac.localdomain"):
+                self.assertEqual(hook._host(), "Stable-Name")
+
+    def test_falls_back_to_the_kernel_hostname(self):
+        missing = os.path.join(self.tmp.name, "nope.plist")
+        blank = self.plist({"System": {"Network": {"HostNames": {"LocalHostName": "  "}}}})
+        for path in (missing, blank):
+            with mock.patch.dict(os.environ, {"ACC_MAC_PREFS": path}, clear=False):
+                os.environ.pop("ACC_HOST", None)
+                with mock.patch.object(hook.socket, "gethostname", return_value="Mac.localdomain"):
+                    self.assertEqual(hook._host(), "Mac")
+
+
 if __name__ == "__main__":
     unittest.main()
