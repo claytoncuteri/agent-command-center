@@ -46,13 +46,13 @@ Copy `config.example.json` → `config.json` (gitignored). Edit as needed.
 |---|---|---|
 | `event_file` | `./events.jsonl` | Path to your append-only NDJSON log. |
 | `event_files` | `null` | A list of NDJSON logs merged into one view; overrides `event_file` when set. Missing files are tolerated. |
-| `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app. Reads only the `sessionId` and `cliSessionId` fields of the app's per-session records. |
+| `claude_app_links` | `false` | macOS with the Claude desktop app: show **Open in Claude** on sessions that are waiting on you, opening that exact session in the app, and let the [focus view](#the-focus-view) follow the session the app has in front. Reads five fields of the app's per-session records: `sessionId`, `cliSessionId`, `lastFocusedAt`, `model` and `effort`. |
 | `turn_summaries` | `false` | Serve the hook's opt-in turn summaries at `/api/summaries`: each session's step names and its end-of-turn recap, question and button labels. Needs `ACC_SUMMARIES=1` on the hook. See [Turn summaries](#turn-summaries-opt-in). |
 | `summaries_dir` | `null` | Where the hook keeps the summary files. `null` means the `state` folder beside the first event file, which is where the hook writes them by default. |
 | `remote_clients` | `[]` | Tailnet (or LAN) addresses allowed to view the dashboard through a local reverse proxy such as `tailscale serve`. Empty means no remote viewers. See [Viewing from your phone](#viewing-from-your-phone). |
 | `touch_icon` | `null` | Path to a PNG served at `/apple-touch-icon.png`, the icon an iPhone uses for Add to Home Screen. |
 | `project_names` | `{}` | Friendly project names in the session view. See [Project names](#project-names). |
-| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first) or `"classic"` (agent cards and the browser approvals workflow). Both stay reachable at `/sessions` and `/classic`. |
+| `view` | `"sessions"` | What `/` serves: `"sessions"` (one row per session, blocked sessions first), `"focus"` (one session in depth, for a tall second screen) or `"classic"` (agent cards and the browser approvals workflow). All stay reachable at `/sessions`, `/focus` and `/classic`. |
 | `bind` | `127.0.0.1` | Interface to bind. Keep at `127.0.0.1` unless using a private mesh. |
 | `port` | `7000` | TCP port. |
 | `title` | `"Agent Command Center"` | Displayed in the header and browser tab. |
@@ -365,6 +365,19 @@ silent for 10 minutes turns red as possibly stuck), *Ready for you* (finished,
 waiting for your next message), then *Idle* and *Closed today* folded away. Tap
 a row for a plain-language timeline. It is built for a phone first and reads
 the same event stream; the original page stays at `/classic`.
+
+<a id="the-focus-view"></a>
+**The focus view** (`/focus`) shows one session in depth and is built for a
+second screen turned portrait: it fills the height without scrolling, and its
+type scales with the screen. It follows you: with `claude_app_links` on, the
+session the desktop app has in front; otherwise the one you last sent a
+message. Tap another session at the bottom to pin it, and the header button to
+follow again. It shows the session's state with a live clock (turn running,
+waiting on you), its title, project, model and effort, what it is doing now,
+its question and answer buttons and its recap in its own words (with
+`turn_summaries`), its plan with every step named, where the current turn's
+time went (commands, edits, thinking, waiting for you), the day's totals, and
+a folded timeline. Sessions blocked elsewhere show as a strip at the top.
 
 Each session appears under a project named after its folder (a Claude Code
 worktree reports its repository's folder). Events also carry `host` and

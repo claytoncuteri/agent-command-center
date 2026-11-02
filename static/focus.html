@@ -1,0 +1,573 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a1330">
+<title>Agent Command Center · Focus</title>
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+<style>
+/* The focus view: one session in depth, following the one you have in front.
+   Built for a tall second screen (a monitor turned portrait), where it fills
+   the height without scrolling; on a phone or a short window it scrolls. Type
+   scales with the screen's width, so a 1080-wide portrait monitor reads at
+   arm's length and a 4K one from across the room. */
+:root {
+  --bg: #0a1330;
+  --bg2: #0d1a40;
+  --glass: rgba(28,48,96,.72);
+  --glass2: rgba(20,36,78,.66);
+  --hair: rgba(150,195,255,.22);
+  --hair-strong: rgba(170,210,255,.38);
+  --text: #eef4ff;
+  --sub: #a9bddb;
+  --faint: #7d93b8;
+  --gold: #f0d38c;
+  --gold-soft: rgba(240,211,140,.16);
+  --blue: #6fd0ff;
+  --green: #63f0b6;
+  --green-soft: rgba(99,240,182,.14);
+  --red: #ff8080;
+  --red-soft: rgba(255,128,128,.14);
+  --grey: #8fa3c4;
+  --violet: #b6acff;
+  --radius: 1rem;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: clamp(15px, 0.6vw + 10px, 24px); }
+html, body { background: var(--bg); color: var(--text); }
+body {
+  font-family: "Inter", system-ui, -apple-system, sans-serif;
+  font-size: 1rem; line-height: 1.4;
+  min-height: 100vh;
+  padding: max(.9rem, env(safe-area-inset-top)) max(1rem, env(safe-area-inset-right)) max(.9rem, env(safe-area-inset-bottom)) max(1rem, env(safe-area-inset-left));
+  display: flex; flex-direction: column; gap: .75rem;
+  background:
+    radial-gradient(900px 520px at 85% -10%, rgba(111,208,255,.22), transparent 62%),
+    radial-gradient(800px 520px at 5% 8%, rgba(130,115,255,.20), transparent 62%),
+    radial-gradient(1200px 700px at 50% 55%, rgba(40,90,200,.20), transparent 70%),
+    linear-gradient(180deg, var(--bg2), var(--bg) 55%, #081028);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+button { font: inherit; color: inherit; }
+a { color: inherit; }
+[hidden] { display: none !important; }
+
+/* Header, shared with the session view. */
+.top { display: flex; align-items: center; gap: .75rem; position: relative; flex: none; }
+.mark { width: 2.1rem; height: 2.1rem; border-radius: .6rem; flex: none;
+  background: linear-gradient(135deg, #8fe3ff, #6b7dff 60%, #f0d38c); box-shadow: 0 0 22px -4px rgba(111,208,255,.7); }
+.marks { display: flex; align-items: center; gap: .4rem; flex: none; }
+.portrait { width: 2.75rem; height: 2.75rem; border-radius: 50%; flex: none; overflow: hidden; border: 2px solid var(--gold);
+  box-shadow: 0 0 0 3px rgba(240,211,140,.14), 0 0 22px -4px rgba(240,211,140,.65); background: #1b2f63; }
+.portrait img { width: 100%; height: 100%; object-fit: cover; display: block; transform: scale(1.12); }
+.star { width: .9rem; height: .9rem; flex: none; fill: var(--gold); filter: drop-shadow(0 0 6px rgba(240,211,140,.8)); }
+.starfield { position: absolute; inset: -10px -6px; pointer-events: none; z-index: -1; overflow: hidden; }
+.starfield svg { position: absolute; fill: var(--gold); opacity: .22; animation: twinkle 6s ease-in-out infinite; }
+@keyframes twinkle { 0%,100% { opacity: .12 } 50% { opacity: .38 } }
+.brand { min-width: 0; font-family: "Space Grotesk"; font-weight: 700; font-size: 1.2rem; letter-spacing: .3px; }
+.brand small { display: block; font-family: "Inter"; font-weight: 500; font-size: .78rem; color: var(--sub); letter-spacing: 0; }
+.live { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: .45rem; font-size: .78rem; color: var(--green);
+  border: 1px solid rgba(99,240,182,.35); background: var(--green-soft); padding: .3rem .65rem; border-radius: 99px; }
+.live i { width: .45rem; height: .45rem; border-radius: 50%; background: currentColor; box-shadow: 0 0 8px currentColor; animation: pulse 2.4s infinite; }
+.live.off { color: var(--red); border-color: rgba(255,128,128,.35); background: var(--red-soft); }
+.live.wait { color: var(--grey); border-color: var(--hair); background: rgba(20,36,78,.5); }
+@keyframes pulse { 0%,100% { opacity: 1 } 50% { opacity: .4 } }
+.follow { flex: none; font-size: .78rem; font-weight: 600; padding: .3rem .7rem; border-radius: 99px; cursor: pointer;
+  border: 1px solid var(--hair); background: rgba(20,36,78,.5); color: var(--sub); }
+.follow.pinned { color: var(--text); border-color: rgba(240,211,140,.6); background: var(--gold-soft); }
+.offline { padding: .7rem .9rem; border-radius: .9rem; font-size: .9rem; border: 1px solid rgba(255,128,128,.45); background: rgba(255,128,128,.12); flex: none; }
+.offline small { display: block; color: var(--sub); font-size: .8rem; margin-top: 2px; }
+
+/* Other sessions that need you, above everything. */
+.alerts { display: flex; flex-direction: column; gap: .4rem; flex: none; }
+.alert { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .6rem; align-items: center; text-align: left; cursor: pointer;
+  padding: .6rem .9rem; border-radius: .9rem; border: 1px solid rgba(240,211,140,.55);
+  background: linear-gradient(180deg, rgba(240,211,140,.14), var(--glass2)); box-shadow: 0 0 30px -10px rgba(240,211,140,.55); }
+.alert.s-error { border-color: rgba(255,128,128,.55); background: linear-gradient(180deg, rgba(255,128,128,.12), var(--glass2)); }
+.alert .dot { margin: 0; }
+.alert b { color: var(--gold); font-weight: 600; }
+.alert.s-error b { color: var(--red); }
+.alert .l { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .92rem; }
+.alert .when { font-size: .8rem; color: var(--sub); white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+/* The focused session. */
+.card { border-radius: var(--radius); padding: .95rem 1.1rem; border: 1px solid var(--hair);
+  background: linear-gradient(180deg, var(--glass), var(--glass2));
+  box-shadow: inset 0 1px 0 rgba(220,235,255,.10), 0 10px 28px -20px rgba(0,8,40,.9); min-width: 0; }
+.card h2 { font-family: "Space Grotesk"; font-size: .82rem; font-weight: 600; letter-spacing: .6px; text-transform: uppercase; color: var(--faint);
+  display: flex; align-items: baseline; gap: .6rem; margin-bottom: .55rem; }
+.card h2 span { margin-left: auto; text-transform: none; letter-spacing: 0; font-family: "Inter"; font-weight: 500; color: var(--sub); font-size: .82rem; text-align: right; }
+.hero { padding: 1.1rem 1.25rem 1.05rem; }
+.state { display: flex; align-items: center; gap: .6rem; font-family: "Space Grotesk"; font-weight: 600; font-size: 1rem; }
+.dot { width: .75rem; height: .75rem; border-radius: 50%; flex: none; }
+.s-need .dot { background: var(--gold); box-shadow: 0 0 0 4px var(--gold-soft), 0 0 12px var(--gold); }
+.s-error .dot { background: var(--red); box-shadow: 0 0 0 4px var(--red-soft), 0 0 12px var(--red); }
+.s-work .dot { background: var(--green); box-shadow: 0 0 10px var(--green); animation: pulse 1.6s infinite; }
+.s-quiet .dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+.s-turn .dot { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+.s-idle .dot, .s-closed .dot { background: transparent; border: 2px solid var(--grey); }
+.s-paused .dot { border-radius: 2px; background: linear-gradient(90deg, var(--violet) 0 35%, transparent 35% 65%, var(--violet) 65% 100%); box-shadow: 0 0 8px rgba(182,172,255,.6); }
+.s-need .state { color: var(--gold); } .s-error .state, .s-quiet .state { color: var(--red); } .s-work .state { color: var(--green); }
+.s-turn .state { color: var(--blue); } .s-paused .state { color: var(--violet); } .s-idle .state { color: var(--grey); }
+.state .clock { margin-left: auto; font-family: "JetBrains Mono"; font-size: .95rem; color: var(--sub); font-variant-numeric: tabular-nums; }
+.hero h1 { font-family: "Space Grotesk"; font-weight: 700; font-size: 1.75rem; line-height: 1.15; margin: .5rem 0 .55rem; letter-spacing: .2px;
+  overflow-wrap: anywhere; }
+.meta { display: flex; flex-wrap: wrap; gap: .4rem; }
+.meta span { font-size: .78rem; font-weight: 600; color: var(--text); padding: .18rem .6rem; border-radius: .45rem;
+  background: rgba(150,195,255,.12); border: 1px solid var(--hair); white-space: nowrap; }
+.meta span.proj { background: rgba(111,208,255,.16); border-color: var(--hair-strong); }
+.meta span.dim { color: var(--sub); font-weight: 500; }
+.nowline { margin-top: .9rem; font-size: 1.2rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.nowline b { font-weight: 600; }
+.s-need .nowline b { color: var(--gold); } .s-error .nowline b { color: var(--red); }
+.nowline small { display: block; font-size: .85rem; font-weight: 500; color: var(--sub); margin-top: .2rem; }
+.nowline .limit { color: var(--gold); }
+.nowline .over { color: var(--red); }
+.acts { margin-top: .85rem; display: flex; gap: .5rem; flex-wrap: wrap; }
+.open-claude { display: inline-flex; align-items: center; gap: .35rem; text-decoration: none; font-size: .9rem; font-weight: 600;
+  padding: .5rem .85rem; border-radius: .65rem; border: 1px solid var(--hair-strong); background: rgba(111,208,255,.14); }
+.open-claude:hover { background: rgba(111,208,255,.24); }
+.s-need .open-claude { border-color: rgba(240,211,140,.6); background: var(--gold-soft); }
+.hero.s-need, .hero.s-error { border-color: rgba(240,211,140,.55); box-shadow: inset 0 1px 0 rgba(255,240,200,.18), 0 0 30px -10px rgba(240,211,140,.55); }
+.hero.s-error { border-color: rgba(255,128,128,.55); }
+
+/* A question or recap in the session's own words. */
+.decision { border-color: rgba(240,211,140,.5); background: linear-gradient(180deg, rgba(240,211,140,.10), var(--glass) 40%, var(--glass2)); }
+.decision h2 { color: var(--gold); }
+.decision .q { font-size: 1.25rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
+.opts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
+.opts span { font-size: .92rem; font-weight: 600; padding: .45rem .85rem; border-radius: .65rem; border: 1px solid var(--hair-strong); background: rgba(111,208,255,.10); }
+.opts span:first-child { border-color: rgba(240,211,140,.7); background: var(--gold-soft); }
+.opts small { display: block; width: 100%; color: var(--faint); font-size: .78rem; margin-top: .1rem; }
+.recap p { font-size: 1rem; line-height: 1.45; color: var(--text); overflow-wrap: anywhere; }
+
+/* Plan and the turn's time, side by side when there is room. */
+.pair { display: grid; grid-template-columns: 1fr; gap: .75rem; flex: none; }
+@media (min-width: 760px) { .pair { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+.bar { height: .5rem; border-radius: .3rem; background: rgba(150,195,255,.14); overflow: hidden; margin-bottom: .7rem; }
+.bar i { display: block; height: 100%; background: var(--green); border-radius: .3rem; box-shadow: 0 0 10px rgba(99,240,182,.6); transition: width .6s ease; }
+.steps { list-style: none; display: flex; flex-direction: column; gap: .35rem; }
+.steps li { display: grid; grid-template-columns: 1.3rem minmax(0, 1fr); gap: .5rem; align-items: start; font-size: .98rem; line-height: 1.35; color: var(--sub); }
+.steps li i { width: 1.05rem; height: 1.05rem; border-radius: 50%; border: 2px solid var(--hair-strong); margin-top: .18rem; display: inline-flex; align-items: center; justify-content: center; font-style: normal; font-size: .7rem; }
+.steps li.done { color: var(--faint); text-decoration: line-through; text-decoration-color: rgba(125,147,184,.6); }
+.steps li.done i { border-color: var(--green); background: rgba(99,240,182,.25); color: var(--green); }
+.steps li.cur { color: var(--text); font-weight: 600; }
+.steps li.cur i { border-color: var(--green); box-shadow: 0 0 0 3px rgba(99,240,182,.18); animation: pulse 1.6s infinite; }
+.segs { display: flex; gap: 3px; height: .55rem; }
+.segs i { flex: 1; border-radius: 3px; background: rgba(150,195,255,.14); }
+.segs i.d { background: rgba(99,240,182,.75); }
+.segs i.c { background: rgba(99,240,182,.35); box-shadow: 0 0 0 1px rgba(99,240,182,.7) inset; animation: pulse 1.6s infinite; }
+.mix { list-style: none; display: flex; flex-direction: column; gap: .4rem; }
+.mix li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: .2rem .6rem; font-size: .9rem; }
+.mix li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mix li em { font-style: normal; color: var(--sub); font-variant-numeric: tabular-nums; }
+.mix li b { grid-column: 1 / -1; display: block; height: .4rem; border-radius: .25rem; background: rgba(150,195,255,.12); overflow: hidden; }
+.mix li b i { display: block; height: 100%; background: var(--blue); border-radius: .25rem; }
+.mix li.wait b i { background: var(--gold); }
+.mix li.think b i { background: var(--violet); }
+.day { margin-top: .8rem; padding-top: .7rem; border-top: 1px solid var(--hair); display: flex; flex-wrap: wrap; gap: .3rem 1.1rem; font-size: .85rem; color: var(--sub); }
+.day b { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* Timeline: fills what is left of a tall screen. */
+.activity { display: flex; flex-direction: column; min-height: 10rem; }
+.tl-wrap { overflow-y: auto; overscroll-behavior: contain; min-height: 0; scrollbar-width: thin; padding-right: .2rem; }
+.tl { list-style: none; border-left: 2px solid var(--hair); margin-left: .35rem; }
+.tl li { position: relative; padding: 0 0 .6rem 1rem; font-size: .92rem; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: .6rem; align-items: baseline; }
+.tl li::before { content: ""; position: absolute; left: -.4rem; top: .32rem; width: .6rem; height: .6rem; border-radius: 50%; background: var(--green); }
+.tl li.ask::before { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+.tl li.fail::before { background: var(--red); }
+.tl li.prompt::before { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+.tl li.turn::before { background: var(--blue); }
+.tl li.quiet::before { background: var(--grey); }
+.tl li.prompt, .tl li.turn { color: var(--blue); }
+.tl li.ask { color: var(--gold); }
+.tl time { font-family: "JetBrains Mono"; font-size: .78rem; color: var(--faint); white-space: nowrap; }
+.tl em { font-style: normal; color: var(--faint); font-size: .8rem; margin-left: .35rem; }
+.calm { color: var(--sub); font-size: .92rem; }
+
+/* Other sessions, at the bottom, a tap away. */
+.others { flex: none; }
+.others h2 button { margin-left: auto; }
+.rows { display: flex; flex-direction: column; gap: .35rem; }
+.rowb { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: .15rem .6rem; align-items: center; text-align: left; cursor: pointer;
+  padding: .5rem .7rem; border-radius: .75rem; border: 1px solid var(--hair); background: rgba(20,36,78,.45); }
+.rowb:hover, .rowb:focus-visible { border-color: var(--hair-strong); outline: none; }
+.rowb .dot { width: .6rem; height: .6rem; grid-row: 1 / span 2; }
+.rowb .t { font-weight: 600; font-size: .92rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowb .when { font-size: .78rem; color: var(--sub); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rowb .l2 { grid-column: 2 / span 2; display: flex; gap: .5rem; align-items: center; min-width: 0; font-size: .8rem; color: var(--sub); }
+.rowb .proj { flex: none; font-size: .72rem; font-weight: 600; color: var(--text); padding: .1rem .5rem; border-radius: .4rem; background: rgba(150,195,255,.12); border: 1px solid var(--hair); }
+.rowb .d { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowb.s-need .t, .rowb.s-error .t { color: var(--gold); }
+.foot { text-align: center; font-size: .78rem; color: var(--faint); flex: none; }
+.foot a { color: var(--sub); }
+@media (prefers-reduced-motion: reduce) { .starfield svg, .live i, .dot, .steps li.cur i, .segs i.c { animation: none; } }
+
+/* A tall screen: everything fits, the timeline and the session list scroll inside. */
+@media (min-height: 1000px) {
+  body { height: 100vh; overflow: hidden; }
+  .activity { flex: 1 1 auto; min-height: 0; }
+  .others .rows { max-height: 24vh; overflow-y: auto; scrollbar-width: thin; }
+}
+</style>
+</head>
+<body>
+<header class="top">
+  <div class="starfield" id="starfield" aria-hidden="true"></div>
+  <div class="mark" id="mark" aria-hidden="true"></div>
+  <div class="marks" id="marks" hidden></div>
+  <div class="brand"><span id="brandTitle">Agent Command Center</span><small id="brandSub">Connecting&hellip;</small></div>
+  <button class="follow" id="follow" hidden></button>
+  <span class="live wait" id="live"><i></i><span id="liveLabel">Connecting</span></span>
+</header>
+
+<div class="offline" id="offline" hidden role="status"></div>
+<div class="alerts" id="alerts" aria-live="polite"></div>
+
+<main id="focus" style="display:contents"></main>
+
+<nav class="card others" id="others" aria-label="Other sessions"></nav>
+<footer class="foot" id="foot"></footer>
+
+<script src="/static/sessions.js"></script>
+<script src="/static/focus.js"></script>
+<script>
+(function () {
+  'use strict';
+  var M = window.ACCSessions, F = window.ACCFocus;
+  var EVENTS = [], LINKS = {}, SUMMARIES = {}, NAMES = null, BOOTED_AT = null;
+  var MODEL = null, FOCUS = null, pinned = null, lastUpdate = null;
+  var ON_THIS_MACHINE = ['127.0.0.1', 'localhost', '[::1]', '::1'].indexOf(location.hostname) >= 0;
+  var TIMELINE_MAX = 80;
+
+  function esc(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function $(id) { return document.getElementById(id); }
+  function now() { return Date.now(); }
+  function titleOf(s) { return s.title || (s.session ? 'Session ' + s.session : s.project); }
+  function dayStart() { var d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+  function hhmm(t) { var d = new Date(t); return ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2); }
+
+  var STATE_WORD = { need: 'Needs you', error: 'Error', work: 'Working', quiet: 'Working, silent', turn: 'Ready for you',
+    paused: 'Paused', idle: 'Idle', closed: 'Closed' };
+
+  // "claude-opus-5-5" -> "Opus 5.5"; anything else as it came.
+  function modelName(id) {
+    if (!id) return null;
+    var m = /(fable|opus|sonnet|haiku)[-_ ]?(\d+)(?:[-_.](\d+))?/i.exec(id);
+    if (!m) return id;
+    return m[1].charAt(0).toUpperCase() + m[1].slice(1).toLowerCase() + ' ' + m[2] + (m[3] ? '.' + m[3] : '');
+  }
+  function effortName(e) { return e ? e.charAt(0).toUpperCase() + e.slice(1) + ' effort' : null; }
+
+  function linkFor(s) {
+    var entry = s.source === 'claude-code' && s.session && LINKS[s.session];
+    if (!entry) return null;
+    return (ON_THIS_MACHINE ? entry.app : entry.web) || null;
+  }
+  function openLink(href, label) {
+    var web = /^https:\/\//.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '';
+    return '<a class="open-claude" href="' + esc(href) + '"' + web + '>' + esc(label) + ' <span aria-hidden="true">↗</span></a>';
+  }
+
+  // Live clocks: elements with data-since count up every second (see tick()).
+  function clockHtml(since, prefix, cls) {
+    return '<span class="' + (cls || 'clock') + '" data-since="' + since + '" data-prefix="' + esc(prefix || '') + '">' +
+      esc((prefix || '') + F.clock(now() - since)) + '</span>';
+  }
+  function limitHtml(s) {
+    if (!s.limitMs || typeof s.limitLeft !== 'number') return '';
+    var end = s.limitStart + s.limitMs;
+    return '<small><span class="limit" data-limit-end="' + end + '">' + esc(limitText(end, now())) + '</span></small>';
+  }
+  function limitText(end, t) {
+    return end >= t ? 'Time limit: ' + F.clock(end - t) + ' left' : 'Over the time limit by ' + F.clock(t - end);
+  }
+
+  function heroHtml(s, t) {
+    var meta = ['<span class="proj">' + esc(s.project) + '</span>'];
+    if (s.folder && s.folder !== s.project) meta.push('<span class="dim">folder ' + esc(s.folder) + '</span>');
+    var entry = s.session && LINKS[s.session];
+    if (entry && entry.model) meta.push('<span>' + esc(modelName(entry.model)) + '</span>');
+    if (entry && entry.effort) meta.push('<span>' + esc(effortName(entry.effort)) + '</span>');
+    if (MODEL.hosts.length > 1 && s.host) meta.push('<span class="dim">' + esc(s.host) + '</span>');
+    if (s.session) meta.push('<span class="dim">session ' + esc(s.session) + '</span>');
+    if (s.openedAt) meta.push('<span class="dim">opened ' + esc(M.rel(t - s.openedAt)) + ' ago</span>');
+
+    var clock = '';
+    if (s.state === 'work' || s.state === 'quiet') {
+      if (s.turnStartedAt !== null) clock = clockHtml(s.turnStartedAt, 'turn ');
+    } else if (s.state === 'need' || s.state === 'error') {
+      clock = clockHtml(s.since, 'waiting ');
+    } else if (s.since) {
+      clock = '<span class="clock">' + esc('for ' + M.dur(t - s.since)) + '</span>';
+    }
+
+    var line;
+    if (s.state === 'need') {
+      line = '<b>' + esc(s.ask ? s.ask.kind : 'Waiting') + ':</b> ' + esc(s.ask ? s.ask.text : 'for you') +
+        (s.openCount > 1 ? ' <small>and ' + (s.openCount - 1) + ' more</small>' : '');
+    } else if (s.state === 'error') {
+      line = '<b>Error:</b> ' + esc(s.note || 'the last task failed');
+    } else if (s.state === 'work' || s.state === 'quiet') {
+      line = esc((s.pausing ? 'Wrapping up to pause · ' : '') + (s.doing || 'Working')) + limitHtml(s) +
+        (s.state === 'quiet' ? '<small class="over">No activity for ' + esc(M.dur(t - s.lastAt)) + '. It may be stuck.</small>' : '');
+    } else {
+      line = esc(M.describe(s, t));
+    }
+    var link = linkFor(s);
+    var label = s.state === 'need' ? 'Answer in Claude' : s.state === 'paused' ? 'Resume in Claude' : 'Open in Claude';
+    return '<section class="card hero s-' + s.state + '">' +
+      '<div class="state"><span class="dot" aria-hidden="true"></span>' + esc(STATE_WORD[s.state] || s.state) + clock + '</div>' +
+      '<h1>' + esc(titleOf(s)) + '</h1>' +
+      '<div class="meta">' + meta.join('') + '</div>' +
+      '<div class="nowline">' + line + '</div>' +
+      (link && s.state !== 'closed' ? '<div class="acts">' + openLink(link, label) + '</div>' : '') +
+      '</section>';
+  }
+
+  // The session's question from its last turn, with its answer buttons.
+  function decisionHtml(s) {
+    var sm = s.summary;
+    if (!sm || !sm.ask || s.state === 'work' || s.state === 'quiet' || s.state === 'need') return '';
+    var opts = sm.options.map(function (o) { return '<span>' + esc(o) + '</span>'; }).join('');
+    return '<section class="card decision"><h2>' + (sm.blocked ? 'Waiting on your answer' : 'It asks') +
+      (sm.turnAt ? '<span>' + esc(M.rel(now() - sm.turnAt)) + ' ago</span>' : '') + '</h2>' +
+      '<p class="q">' + esc(sm.ask) + '</p>' +
+      (opts ? '<div class="opts">' + opts + '<small>Its suggested answer first. Answer in Claude.</small></div>' : '') +
+      '</section>';
+  }
+
+  function recapHtml(s) {
+    var sm = s.summary;
+    if (!sm || !sm.recap) return '';
+    return '<section class="card recap"><h2>Recap, in its own words' +
+      (sm.turnAt ? '<span>ended ' + esc(M.rel(now() - sm.turnAt)) + ' ago</span>' : '') + '</h2>' +
+      '<p>' + esc(sm.recap) + '</p></section>';
+  }
+
+  function planHtml(s) {
+    var sm = s.summary, steps = s.steps;
+    var named = sm && sm.steps.length ? sm.steps : null;
+    if (!named && !steps) return '<section class="card"><h2>Plan</h2><p class="calm">No task list this turn.</p></section>';
+    var total = named ? Math.max(sm.stepsTotal, named.length) : steps.total;
+    var done = named ? named.filter(function (x) { return x.status === 'completed'; }).length : steps.done;
+    var cur = named ? (named.map(function (x) { return x.status; }).indexOf('in_progress') + 1 || null) : steps.current;
+    var head = done >= total ? 'All ' + total + ' steps done' : 'Step ' + (cur || done + 1) + ' of ' + total;
+    var body;
+    if (named) {
+      body = '<ol class="steps">' + named.map(function (x) {
+        var cls = x.status === 'completed' ? 'done' : x.status === 'in_progress' ? 'cur' : '';
+        return '<li class="' + cls + '"><i>' + (cls === 'done' ? '✓' : '') + '</i><span>' + esc(x.name || 'Step') + '</span></li>';
+      }).join('') + (total > named.length ? '<li><i></i><span class="calm">' + (total - named.length) + ' more</span></li>' : '') + '</ol>';
+    } else {
+      var segs = [];
+      for (var i = 1; i <= Math.min(total, 40); i++) {
+        segs.push('<i class="' + (i <= done ? 'd' : i === (cur || done + 1) ? 'c' : '') + '"></i>');
+      }
+      body = '<div class="segs" title="' + esc(done + ' of ' + total + ' steps done') + '">' + segs.join('') + '</div>' +
+        '<p class="calm" style="margin-top:.6rem">Step names are not recorded for this session.</p>';
+    }
+    return '<section class="card plan"><h2>Plan<span>' + esc(head) + '</span></h2>' +
+      '<div class="bar"><i style="width:' + Math.round(100 * Math.min(1, done / Math.max(1, total))) + '%"></i></div>' + body + '</section>';
+  }
+
+  function mixHtml(s, t) {
+    var turn = F.currentTurn(s, t);
+    var mix = F.timeMix(turn).slice(0, 6);
+    var head = turn ? (turn.live ? 'This turn' : 'Last turn') : 'Turn';
+    var sub = turn ? (turn.live ? 'running ' + M.dur(t - turn.start) : 'took ' + M.dur(turn.end - turn.start)) : '';
+    var rows = mix.map(function (m) {
+      var cls = m.label === 'Waiting for you' ? 'wait' : m.label === 'Thinking' ? 'think' : '';
+      return '<li class="' + cls + '"><span>' + esc(m.label) + '</span><em>' + esc(M.dur(m.ms) || '0s') + '</em>' +
+        '<b><i style="width:' + Math.round(m.share * 100) + '%"></i></b></li>';
+    }).join('');
+    var d = F.dayStats(s, t, dayStart());
+    return '<section class="card"><h2>' + esc(head) + (sub ? '<span>' + esc(sub) + '</span>' : '') + '</h2>' +
+      (rows ? '<ul class="mix">' + rows + '</ul>' : '<p class="calm">Nothing yet.</p>') +
+      '<div class="day"><span>Today</span><span><b>' + d.turns + '</b> turn' + (d.turns === 1 ? '' : 's') + '</span>' +
+      '<span>worked <b>' + esc(M.dur(d.workedMs) || '0s') + '</b></span>' +
+      '<span>waited on you <b>' + esc(M.dur(d.waitedMs) || '0s') + '</b></span></div></section>';
+  }
+
+  function timelineHtml(s, t) {
+    var items = F.foldTimeline(s, TIMELINE_MAX).map(function (x) {
+      var when = hhmm(x.at) + (x.count > 1 && x.at - x.from >= 60000 ? ' from ' + hhmm(x.from) : '');
+      return '<li class="' + x.kind + '"><time>' + esc(when) + '</time><span>' + esc(x.line) +
+        (x.count > 1 ? '<em>×' + x.count + '</em>' : '') + '</span></li>';
+    }).join('');
+    return '<section class="card activity"><h2>Activity<span>' + esc(s.events.length) + ' events</span></h2>' +
+      '<div class="tl-wrap"><ul class="tl">' + items + '</ul></div></section>';
+  }
+
+  function rowHtml(s, t) {
+    var when = (s.state === 'need' || s.state === 'error') ? 'waiting ' + M.rel(t - s.since) : M.rel(t - s.lastAt);
+    return '<button class="rowb s-' + s.state + '" data-key="' + esc(s.key) + '" type="button">' +
+      '<span class="dot" aria-hidden="true"></span><span class="t">' + esc(titleOf(s)) + '</span><span class="when">' + esc(when) + '</span>' +
+      '<span class="l2"><span class="proj">' + esc(s.project) + '</span><span class="d">' + esc(M.describe(s, t)) + '</span></span></button>';
+  }
+
+  function render() {
+    var t = now();
+    MODEL = M.deriveSessions(EVENTS, t, { bootedAt: BOOTED_AT, names: NAMES, summaries: SUMMARIES });
+    var key = F.pickFocus(MODEL.sessions, LINKS, pinned);
+    if (pinned && key !== pinned) pinned = null;  // the pinned session closed
+    FOCUS = MODEL.sessions.filter(function (x) { return x.key === key; })[0] || null;
+
+    var active = MODEL.sessions.filter(function (s) { return s.state !== 'closed'; });
+    $('brandSub').textContent = pinned ? 'Pinned to one session' : 'Following the session you have in front';
+    var fb = $('follow');
+    fb.hidden = false;
+    fb.className = 'follow' + (pinned ? ' pinned' : '');
+    fb.textContent = pinned ? 'Pinned · tap to follow' : 'Following';
+
+    var blocked = F.blockedElsewhere(MODEL.sessions, key);
+    $('alerts').innerHTML = blocked.map(function (s) {
+      var kind = s.state === 'error' ? 'Error' : (s.ask ? s.ask.kind : 'Waiting');
+      var text = s.state === 'error' ? s.note : (s.ask ? s.ask.text : 'for you');
+      return '<button class="alert s-' + s.state + '" data-key="' + esc(s.key) + '" type="button"><span class="dot"></span>' +
+        '<span class="l">' + esc(s.project) + ' · ' + esc(titleOf(s)) + ' · <b>' + esc(kind) + ':</b> ' + esc(text) + '</span>' +
+        '<span class="when">waiting ' + esc(M.rel(t - s.since)) + '</span></button>';
+    }).join('');
+
+    if (!FOCUS) {
+      $('focus').innerHTML = '<section class="card"><p class="calm">No open sessions. This page follows whichever Claude Code session you have in front.</p></section>';
+    } else {
+      $('focus').innerHTML = heroHtml(FOCUS, t) + decisionHtml(FOCUS) +
+        '<div class="pair">' + planHtml(FOCUS) + mixHtml(FOCUS, t) + '</div>' + recapHtml(FOCUS) + timelineHtml(FOCUS, t);
+    }
+
+    var others = F.others(MODEL.sessions, key);
+    $('others').innerHTML = '<h2>Other sessions<span>' + others.length + ' open · tap one to pin it</span></h2>' +
+      (others.length ? '<div class="rows">' + others.map(function (s) { return rowHtml(s, t); }).join('') + '</div>'
+        : '<p class="calm">No other open sessions.</p>');
+
+    var ago = lastUpdate ? M.rel(t - lastUpdate) : null;
+    $('foot').innerHTML = 'Read-only.' + (ago ? ' Updated ' + (ago === 'now' ? 'just now' : ago + ' ago') + '.' : '') +
+      ' &middot; <a href="/sessions">All sessions</a> &middot; <a href="/classic">Classic view</a>';
+    document.title = (MODEL.counts.need ? '(' + MODEL.counts.need + ') ' : '') + ($('brandTitle').textContent || 'Agent Command Center') + ' · Focus';
+  }
+
+  // Every second: only the clocks move, so the timeline keeps its scroll position.
+  function tick() {
+    var t = now();
+    var els = document.querySelectorAll('[data-since]');
+    for (var i = 0; i < els.length; i++) {
+      els[i].textContent = (els[i].getAttribute('data-prefix') || '') + F.clock(t - Number(els[i].getAttribute('data-since')));
+    }
+    var lim = document.querySelectorAll('[data-limit-end]');
+    for (var j = 0; j < lim.length; j++) {
+      var end = Number(lim[j].getAttribute('data-limit-end'));
+      lim[j].textContent = limitText(end, t);
+      lim[j].className = end >= t ? 'limit' : 'over';
+    }
+  }
+
+  document.addEventListener('click', function (ev) {
+    if (ev.target.closest && ev.target.closest('a.open-claude')) return;
+    var el = ev.target.closest ? ev.target.closest('[data-key],#follow') : null;
+    if (!el) return;
+    if (el.id === 'follow') { pinned = null; render(); return; }
+    pinned = el.getAttribute('data-key');
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  function loadLinks() {
+    fetch('/api/links').then(function (r) { return r.json(); }).then(function (map) {
+      if (map && typeof map === 'object') { LINKS = map; render(); }
+    }).catch(function () {});
+  }
+  function loadSummaries() {
+    fetch('/api/summaries').then(function (r) { return r.json(); }).then(function (map) {
+      if (map && typeof map === 'object') { SUMMARIES = map; render(); }
+    }).catch(function () {});
+  }
+
+  var ES = null, retryTimer = null, offlineSince = null;
+  function setLive(state) {
+    var el = $('live');
+    el.className = 'live' + (state === 'on' ? '' : state === 'off' ? ' off' : ' wait');
+    $('liveLabel').textContent = state === 'on' ? 'Live' : state === 'off' ? 'Offline' : 'Connecting';
+    if (state === 'off' && offlineSince === null) offlineSince = now();
+    if (state === 'on') offlineSince = null;
+    showOffline();
+  }
+  function showOffline() {
+    var box = $('offline');
+    if (offlineSince === null || now() - offlineSince < 8000) { box.hidden = true; return; }
+    var ago = lastUpdate ? M.rel(now() - lastUpdate) : null;
+    box.innerHTML = 'Can’t reach the computer running your sessions. It may be asleep, restarting or offline.' +
+      '<small>Showing what it last sent' + (ago ? ' (' + (ago === 'now' ? 'just now' : ago + ' ago') + ')' : '') + '. This reconnects on its own.</small>';
+    box.hidden = false;
+  }
+  function connect() {
+    if (ES) { try { ES.close(); } catch (_) {} }
+    ES = new EventSource('/api/stream');
+    ES.onopen = function () { setLive('on'); loadLinks(); loadSummaries(); };
+    ES.onmessage = function (m) {
+      try { EVENTS = JSON.parse(m.data) || []; } catch (_) { return; }
+      lastUpdate = now(); setLive('on'); render(); loadSummaries();
+    };
+    ES.onerror = function () {
+      setLive('off');
+      if (ES.readyState === 2 && !retryTimer) retryTimer = setTimeout(function () { retryTimer = null; connect(); }, 5000);
+    };
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.visibilityState !== 'visible') return;
+    if (!ES || ES.readyState === 2 || offlineSince !== null) connect();
+    render();
+  });
+  window.addEventListener('online', function () { connect(); });
+
+  var STAR = '<path d="M12 1.6l2.9 6.6 7.2.7-5.4 4.8 1.6 7.1L12 17.1l-6.3 3.7 1.6-7.1L1.9 8.9l7.2-.7z"/>';
+  function renderMarks(logo) {
+    var list = (Array.isArray(logo) ? logo : [logo]).filter(function (x) {
+      return typeof x === 'string' && /^(data:image\/|https?:\/\/|\/)/.test(x);
+    }).slice(0, 3);
+    if (!list.length) return;
+    $('marks').innerHTML = list.map(function (src, i) {
+      return (i ? '<svg class="star" viewBox="0 0 24 24" aria-hidden="true">' + STAR + '</svg>' : '') +
+        '<span class="portrait"><img alt="" src="' + esc(src) + '"></span>';
+    }).join('');
+    $('marks').hidden = false;
+    $('mark').style.display = 'none';
+  }
+  (function stars() {
+    var spots = [[3, 18, 9, 0], [22, 70, 7, 1.5], [38, 12, 6, 3], [55, 64, 8, 0.8], [71, 22, 6, 2.2], [86, 60, 9, 4], [95, 14, 6, 1]];
+    $('starfield').innerHTML = spots.map(function (p) {
+      return '<svg viewBox="0 0 24 24" style="left:' + p[0] + '%;top:' + p[1] + '%;width:' + p[2] + 'px;height:' + p[2] +
+        'px;animation-delay:' + p[3] + 's">' + STAR + '</svg>';
+    }).join('');
+  })();
+
+  fetch('/api/config').then(function (r) { return r.json(); }).then(function (cfg) {
+    if (cfg && cfg.title) $('brandTitle').textContent = cfg.title;
+    if (cfg && typeof cfg.booted_at === 'number') BOOTED_AT = cfg.booted_at * 1000;
+    if (cfg && cfg.project_names) NAMES = cfg.project_names;
+    if (cfg && cfg.logo) renderMarks(cfg.logo);
+    render();
+  }).catch(function () {});
+  fetch('/api/events').then(function (r) { return r.json(); }).then(function (evs) {
+    EVENTS = evs || []; lastUpdate = now(); render();
+  }).catch(function () { setLive('off'); });
+  connect();
+  loadLinks(); loadSummaries();
+  setInterval(tick, 1000);
+  setInterval(function () { render(); showOffline(); }, 15000);
+  setInterval(loadLinks, 5000);
+  setInterval(loadSummaries, 10000);
+})();
+</script>
+</body>
+</html>

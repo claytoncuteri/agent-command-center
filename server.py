@@ -52,17 +52,20 @@ _DEFAULTS: dict = {
     # Where Revise+Submit decisions are logged (separate from the event stream).
     "corrections_file": "./corrections.jsonl",
     "telegram": None,
-    # Which page "/" serves: "sessions" (one row per session, needs-you first)
-    # or "classic" (agent cards and the approvals workflow). Both stay reachable
-    # at /sessions and /classic.
+    # Which page "/" serves: "sessions" (one row per session, needs-you first),
+    # "focus" (one session in depth, following the one you have in front; built
+    # for a tall second screen) or "classic" (agent cards and the approvals
+    # workflow). All stay reachable at /sessions, /focus and /classic.
     "view": "sessions",
     # Friendly project names: {"Projects/Orion": "Orion", "orion-*": "Orion"}.
     # A key with a slash is a folder under home (and everything inside it);
     # otherwise it is a folder name, with * standing for the rest.
     "project_names": {},
     # macOS + Claude desktop app only: link each Claude Code session row to the
-    # same session in the app ("Open in Claude"). Reads only two id fields from
-    # the app's per-session records. Off unless you turn it on.
+    # same session in the app ("Open in Claude"), and let the focus view follow
+    # the session the app has in front. Reads five fields from the app's
+    # per-session records: two ids, when the session was last focused, its model
+    # and its effort. Off unless you turn it on.
     "claude_app_links": False,
     # Serve the hook's opt-in turn summaries (ACC_SUMMARIES=1): each session's
     # step names and its end-of-turn recap, question and button labels. Off
@@ -79,7 +82,7 @@ _DEFAULTS: dict = {
     "touch_icon": None,
 }
 
-_VIEWS = {"sessions": "sessions.html", "classic": "index.html"}
+_VIEWS = {"sessions": "sessions.html", "focus": "focus.html", "classic": "index.html"}
 
 _ACTION_MODES = {"readonly", "browser", "telegram", "both"}
 # Modes in which the in-browser write-back endpoint is live.
@@ -355,22 +358,38 @@ def api_config() -> JSONResponse:
 # id, whose first 8 characters are the event stream's `session`). A third,
 # `bridgeSessionIds`, holds the session's Remote Control id ("session_<id>")
 # when Remote Control is on; it gives a claude.ai link that opens the same
-# session on a phone or another computer. Nothing else is read or returned.
+# session on a phone or another computer. Three more fields feed the focus view:
+# `lastFocusedAt` (when the app last showed the session, epoch ms), `model` and
+# `effort`. Nothing else is read or returned: no title, folder, prompt or text.
 
 APP_SESSIONS_DIR = (
     pathlib.Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
 )
 _APP_ID = re.compile(r"^local_[0-9a-f-]{8,64}$")
 _BRIDGE_ID = re.compile(r"^session_[A-Za-z0-9]{10,64}$")
+_PLAIN_WORD = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,39}$")  # a model or effort name
 _APP_RECORD_MAX_BYTES = 2_000_000
-_LINKS_TTL_SECONDS = 30.0
+# Short, so the focus view notices a switch between sessions within seconds.
+_LINKS_TTL_SECONDS = 5.0
 _links_cache: dict = {"at": 0.0, "root": None, "links": {}}
+
+
+def _plain_word(value) -> Optional[str]:
+    return value if isinstance(value, str) and _PLAIN_WORD.match(value) else None
+
+
+def _epoch_ms(value) -> Optional[int]:
+    """An epoch-milliseconds stamp between 2001 and 2286, else None."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 10**12 <= value < 10**13 else None
 
 
 def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] = None) -> dict:
     """
-    Map the event stream's 8-character session id to its links:
-    {"app": "claude://...", "web": "https://claude.ai/code/session_..." or None}.
+    Map the event stream's 8-character session id to its app record's facts:
+    {"app": "claude://...", "web": "https://claude.ai/code/session_..." or None,
+     "focused_at": epoch ms or None, "model": str or None, "effort": str or None}.
     """
     root = pathlib.Path(root) if root is not None else APP_SESSIONS_DIR
     now = now if now is not None else datetime.now(timezone.utc).timestamp()
@@ -409,6 +428,9 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
         links[key] = {
             "app": "claude://claude.ai/epitaxy/" + app_id,
             "web": ("https://claude.ai/code/" + web_ids[-1]) if web_ids else None,
+            "focused_at": _epoch_ms(rec.get("lastFocusedAt")),
+            "model": _plain_word(rec.get("model")),
+            "effort": _plain_word(rec.get("effort")),
         }
     _links_cache.update({"at": now, "root": str(root), "links": links})
     return links
@@ -416,7 +438,7 @@ def claude_app_links(root: Optional[pathlib.Path] = None, now: Optional[float] =
 
 @app.get("/api/links")
 def api_links() -> JSONResponse:
-    """Session id (8 chars) -> {"app", "web"} links that open it in Claude."""
+    """Session id (8 chars) -> its links and, for the focus view, when the app last showed it."""
     if not CONFIG.get("claude_app_links"):
         return JSONResponse(content={})
     return JSONResponse(content=claude_app_links())
@@ -918,7 +940,7 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 def page_for(path: str) -> str:
-    """The static page a browser path maps to: /classic, /sessions, else the default view."""
+    """The static page a browser path maps to: /classic, /sessions, /focus, else the default view."""
     first = path.strip("/").split("/", 1)[0]
     if first in _VIEWS:
         return _VIEWS[first]

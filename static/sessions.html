@@ -489,7 +489,7 @@ button { font: inherit; color: inherit; }
     var ago = lastUpdate ? M.rel(t - lastUpdate) : null;
     $('foot').innerHTML = 'Read-only. Answer decisions where your agents run.' +
       (ago ? ' Updated ' + (ago === 'now' ? 'just now' : ago + ' ago') + '.' : '') +
-      ' &middot; <a href="/classic">Classic view</a>';
+      ' &middot; <a href="/focus">Focus view</a> &middot; <a href="/classic">Classic view</a>';
 
     document.title = (c.need ? '(' + c.need + ') ' : '') + ($('brandTitle').textContent || 'Agent Command Center');
     if (openKey) renderSheet();
