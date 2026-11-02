@@ -398,6 +398,32 @@ class TestSessionModel(unittest.TestCase):
         s = self.one([ev(2, "info", "Pause requested", pause=True)])
         self.assertIn(s["state"], ("turn", "idle", "paused"))
 
+    def test_go_offline_notice_counts_down_then_saved_or_paused(self):
+        told = ev(3, "info", "Time limit set", time_limit=600, pause=True)
+        s = self.one([ev(4, "started", "Working", doing="Thinking"), told, ev(1, "started", "Working", doing="Editing files")])
+        self.assertEqual(s["state"], "work", "the mark does not change what the session is doing")
+        self.assertTrue(s["line"].startswith("Saving its work \u00b7 7m until you go offline \u00b7 Editing files"), s["line"])
+        self.assertEqual(s["timeline"][1], "Told to save its work and stop within 10m")
+        late = self.one([ev(14, "started", "Working", doing="Thinking"), ev(13, "info", "Time limit set", time_limit=600, pause=True),
+                         ev(1, "started", "Working", doing="Editing files")])
+        self.assertTrue(late["line"].startswith("Still going 3m past your offline time"), late["line"])
+        saved = self.one([ev(9, "started", "Working", doing="Thinking"), ev(8, "info", "Time limit set", time_limit=600, pause=True),
+                          ev(5, "finished", "Your turn")])
+        self.assertEqual((saved["state"], saved["line"]), ("turn", "Work saved before you go offline"))
+        cut = self.one([ev(14, "started", "Working", doing="Thinking"), ev(13, "info", "Time limit set", time_limit=600, pause=True),
+                        ev(3, "finished", "Your turn")])
+        self.assertEqual(cut["state"], "paused")
+        self.assertTrue(cut["line"].startswith("Paused for your time offline"), cut["line"])
+
+    def test_cancelled_pause_clears_the_limit(self):
+        s = self.one([ev(6, "started", "Working", doing="Thinking"), ev(5, "info", "Time limit set", time_limit=600, pause=True),
+                      ev(2, "info", "Time limit cleared"), ev(1, "started", "Working", doing="Editing files")])
+        self.assertEqual((s["state"], s["line"]), ("work", "Editing files \u00b7 turn running 6m"))
+        self.assertEqual(s["timeline"][1], "The pause was cancelled; carrying on")  # newest first
+        done = self.one([ev(14, "started", "Working", doing="Thinking"), ev(13, "info", "Time limit set", time_limit=600, pause=True),
+                         ev(4, "info", "Time limit cleared"), ev(3, "finished", "Your turn")])
+        self.assertEqual(done["state"], "turn", "no limit left to be paused at")
+
     def test_time_limit_countdown_then_ready_or_paused(self):
         s = self.one([ev(4, "started", "Working", doing="Thinking", time_limit=600), ev(1, "started", "Working", doing="Editing files")])
         self.assertTrue(s["line"].startswith("Time limit \u00b7 6m left \u00b7 Editing files"), s["line"])

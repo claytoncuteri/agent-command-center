@@ -261,8 +261,9 @@ id, the working folder (its name, and its path relative to your home folder),
 the tool name and two flags. It never reads your
 prompt, tool inputs or outputs, the assistant's reply, or the transcript, and
 every `detail` is a fixed template (`permission: Bash`). It prints nothing and
-always exits 0, so it cannot block or steer a session. See the docstring at the
-top of the script for the full event mapping.
+always exits 0, so it cannot block or steer a session (one opt-in exception,
+the "Go offline in" notice, is described below). See the docstring at the top
+of the script for the full event mapping.
 
 **1. Install a pinned copy.** Don't point Claude Code at this working tree: a
 `git pull` would change code that runs inside every session. Copy it:
@@ -297,6 +298,47 @@ project reports). Merge this into any `hooks` block you already have:
 only when the session's activity changes ("Editing files" to "Running a
 command"), so a run of edits is one line. The others are quick and run inline
 with a short timeout. Python 3.8 or newer is enough; the script has no dependencies.
+
+### Go offline in N minutes
+
+The **Go offline in…** button under the header (sessions and focus pages)
+asks for a number of minutes and tells every Claude Code session to save its
+work and end its turn by then, so you can close the laptop knowing nothing is
+left half-done. The dashboard shows a countdown pill with **Cancel**; each
+session that has been told shows "Saving its work · 12m until you go offline",
+then "Work saved before you go offline" or "Paused for your time offline" when
+its turn ends.
+
+How it works: the button writes `pause.json` beside the event file
+(`{"at": <epoch seconds>}`), through `POST /api/pause`, which needs the
+custom `X-ACC-Pause` header (so another origin cannot send it) and is open in
+every `actions_mode`, since it drives no agent. The hook reads the file and
+prints one fixed sentence into the session's context: once when the pause is
+set ("the user will go offline at 14:30, in about 15 minutes: save your
+work…"), once when the time arrives, once if you cancel. The sentence carries
+a clock time and nothing else, so no text from any file can reach a session
+through it. Each session is also marked on the dashboard with a time limit.
+
+It is opt-in, with `ACC_PAUSE_NOTICE=1`, and only on **synchronous** hook
+entries: an async hook's output reaches the session a turn late, after the
+work you wanted stopped. Add it to `UserPromptSubmit` and `SessionStart`, and
+add one more `PostToolUse` entry that runs inline and does only this check
+(`ACC_PAUSE_ONLY=1`), so a session in the middle of a long turn hears within
+one tool call:
+
+```json
+"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "ACC_PAUSE_NOTICE=1 python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+"SessionStart":     [{"hooks": [{"type": "command", "command": "ACC_PAUSE_NOTICE=1 python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+"PostToolUse": [
+  {"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]},
+  {"hooks": [{"type": "command", "command": "ACC_PAUSE_NOTICE=1 ACC_PAUSE_ONLY=1 python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 3}]}
+]
+```
+
+The inline entry costs one Python start per tool call (tens of milliseconds)
+and reads one small file. A pause more than two hours past is forgotten, and
+the hook marks the sessions it has told in their state files, so each hears
+each stage once.
 
 ### Project names
 

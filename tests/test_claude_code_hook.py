@@ -1074,3 +1074,146 @@ class TestHostLabel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPauseNotice(HookCase):
+    """Opt-in: the dashboard's scheduled pause is told to the session in one fixed sentence, once per stage."""
+
+    def setUp(self):
+        super().setUp()
+        self.pause_file = os.path.join(self.tmp.name, "pause.json")
+        os.environ["ACC_PAUSE_FILE"] = self.pause_file
+        os.environ["ACC_PAUSE_NOTICE"] = "1"
+        os.environ.pop("ACC_PAUSE_ONLY", None)
+
+    def schedule(self, seconds_from_now, **extra):
+        import time
+        body = {"at": time.time() + seconds_from_now, "set_at": time.time()}
+        body.update(extra)
+        with open(self.pause_file, "w", encoding="utf-8") as f:
+            json.dump(body, f)
+
+    def speak(self, event, session_id="sess-0001-abcdef", **extra):
+        """Like run_hook, but returns (stdout, events): the notice is the one thing the hook may print."""
+        data = {"hook_event_name": event, "session_id": session_id, "cwd": "/Users/x/Projects/Demo"}
+        data.update(extra)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            hook.handle(data)
+        return out.getvalue(), self.events()
+
+    def notice(self, stdout, event):
+        if not stdout:
+            return None
+        doc = json.loads(stdout)
+        self.assertEqual(list(doc), ["hookSpecificOutput"])
+        self.assertEqual(doc["hookSpecificOutput"]["hookEventName"], event)
+        return doc["hookSpecificOutput"]["additionalContext"]
+
+    def test_off_by_default_even_with_a_pause_set(self):
+        os.environ.pop("ACC_PAUSE_NOTICE", None)
+        self.schedule(900)
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual(out, "")
+        self.assertNotIn("Time limit set", [e["action"] for e in evs])
+
+    def test_told_once_that_the_pause_is_coming(self):
+        self.schedule(15 * 60)
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        text = self.notice(out, "PostToolUse")
+        self.assertIn("go offline at", text)
+        self.assertIn("in about 15 minutes", text)
+        self.assertIn("save your work", text)
+        marks = [e for e in evs if e["action"] == "Time limit set"]
+        self.assertEqual(len(marks), 1)
+        self.assertTrue(880 <= marks[0]["time_limit"] <= 900, marks[0]["time_limit"])
+        self.assertIs(marks[0]["pause"], True)
+        self.assertEqual(marks[0]["agent"], "Demo")
+        # Said once: the next tool calls stay silent and add no mark.
+        out, evs = self.speak("PostToolUse", tool_name="Edit")
+        self.assertEqual(out, "")
+        out, evs = self.speak("UserPromptSubmit", prompt="carry on")
+        self.assertEqual(out, "")
+        self.assertEqual(len([e for e in evs if e["action"] == "Time limit set"]), 1)
+
+    def test_new_sessions_and_prompts_hear_it_too(self):
+        self.schedule(600)
+        out, _ = self.speak("SessionStart", session_id="sess-new-000001", source="startup")
+        self.assertIn("in about 10 minutes", self.notice(out, "SessionStart"))
+        out, _ = self.speak("UserPromptSubmit", session_id="sess-two-000002", prompt="hello")
+        self.assertIn("go offline", self.notice(out, "UserPromptSubmit"))
+        # Stop and SessionEnd never carry context: nothing printed, nothing marked told.
+        out, _ = self.speak("Stop", session_id="sess-three-00003")
+        self.assertEqual(out, "")
+        self.assertNotIn("pause_told", hook.load_state("sess-three-00003"))
+
+    def test_told_again_when_the_time_arrives_then_silent(self):
+        self.schedule(300)
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("in about 5 minutes", self.notice(out, "PostToolUse"))
+        self.schedule(-5)  # the clock passed it
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        text = self.notice(out, "PostToolUse")
+        self.assertIn("going offline now", text)
+        self.assertIn("end your turn at once", text)
+        self.assertEqual(len([e for e in evs if e["action"] == "Time limit set"]), 1, "no second mark")
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual(out, "")
+        # Straight to "now" when the first word comes after the time.
+        self.schedule(-30)
+        out, _ = self.speak("PostToolUse", session_id="sess-late-000004", tool_name="Bash")
+        self.assertIn("going offline now", self.notice(out, "PostToolUse"))
+
+    def test_cancelled_after_being_told(self):
+        self.schedule(900)
+        self.speak("PostToolUse", tool_name="Bash")
+        os.remove(self.pause_file)
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("is cancelled", self.notice(out, "PostToolUse"))
+        self.assertEqual(evs[-1]["action"], "Time limit cleared")
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual(out, "")
+        self.assertEqual(len([e for e in evs if e["action"] == "Time limit cleared"]), 1)
+        # Never told: a cancelled pause is nothing to say.
+        out, _ = self.speak("PostToolUse", session_id="sess-quiet-00005", tool_name="Bash")
+        self.assertEqual(out, "")
+
+    def test_rescheduled_pause_is_told_anew(self):
+        self.schedule(900)
+        self.speak("PostToolUse", tool_name="Bash")
+        self.schedule(1800)
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("in about 30 minutes", self.notice(out, "PostToolUse"))
+        self.assertEqual(len([e for e in evs if e["action"] == "Time limit set"]), 2)
+
+    def test_malformed_or_long_past_file_is_nothing(self):
+        for body in ('{"at": "soon"}', '{"at": true}', "[]", "not json", ""):
+            with open(self.pause_file, "w", encoding="utf-8") as f:
+                f.write(body)
+            out, _ = self.speak("PostToolUse", tool_name="Bash")
+            self.assertEqual(out, "", body)
+        self.schedule(-3 * 3600)
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual(out, "")
+        self.assertNotIn("pause_told", hook.load_state("sess-0001-abcdef"))
+
+    def test_nothing_from_the_file_reaches_the_session(self):
+        self.schedule(900, note=SENTINEL, text=SENTINEL, at_label=SENTINEL)
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("go offline", out)
+        self.assertNotIn(SENTINEL, out)
+        self.assertNotIn(SENTINEL, self.raw())
+
+    def test_pause_only_mode_skips_the_event_work(self):
+        os.environ["ACC_PAUSE_ONLY"] = "1"
+        self.schedule(900)
+        out, evs = self.speak("PreToolUse", tool_name="Bash")
+        self.assertIn("go offline", self.notice(out, "PreToolUse"))
+        self.assertEqual([e["action"] for e in evs], ["Time limit set"], "no Working event from the pause-only run")
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual((out, len(evs)), ("", 1))
+        os.environ.pop("ACC_PAUSE_ONLY")
+        # The usual run still reports work and stays silent about a notice already given.
+        out, evs = self.speak("PreToolUse", tool_name="Bash")
+        self.assertEqual(out, "")
+        self.assertEqual(evs[-1]["doing"], "Running a command")

@@ -15,6 +15,7 @@ import json
 import pathlib
 import re
 import secrets
+import time
 from datetime import datetime, timezone
 from typing import AsyncIterator, Optional
 
@@ -348,6 +349,91 @@ def api_config() -> JSONResponse:
     if mode in _BROWSER_ACTION_MODES:
         payload["actions_token"] = ACTIONS_TOKEN
     return JSONResponse(content=payload)
+
+
+# ── Go offline in N minutes ─────────────────────────────────────────────────────
+#
+# The "Go offline in…" button writes one small file beside the event file:
+# {"at": <epoch seconds>, "set_at": <epoch seconds>, "minutes": N}. The Claude
+# Code hook reads it (opt-in, ACC_PAUSE_NOTICE=1) and tells each session, in a
+# fixed sentence, to save its work and end its turn by then. Nothing here
+# drives an agent, so the endpoint is open in every actions_mode; it still
+# requires a custom request header, which makes a browser send a CORS
+# preflight that another origin cannot pass. A pause more than two hours past
+# reads as none.
+
+_PAUSE_MAX_MINUTES = 12 * 60
+_PAUSE_GRACE_SECONDS = 2 * 3600
+_PAUSE_HEADER = "x-acc-pause"
+
+
+def pause_path() -> pathlib.Path:
+    return pathlib.Path(CONFIG["event_file"]).expanduser().parent / "pause.json"
+
+
+def read_pause(now: Optional[float] = None) -> dict:
+    """The scheduled pause as the pages see it: {"at": epoch seconds or None, ...}."""
+    now = time.time() if now is None else now
+    try:
+        data = json.loads(pause_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"at": None}
+    at = data.get("at") if isinstance(data, dict) else None
+    if isinstance(at, bool) or not isinstance(at, (int, float)) or now > at + _PAUSE_GRACE_SECONDS:
+        return {"at": None}
+    out: dict = {"at": float(at)}
+    if isinstance(data.get("set_at"), (int, float)) and not isinstance(data.get("set_at"), bool):
+        out["set_at"] = float(data["set_at"])
+    if isinstance(data.get("minutes"), int) and not isinstance(data.get("minutes"), bool):
+        out["minutes"] = data["minutes"]
+    return out
+
+
+def write_pause(minutes: int, now: Optional[float] = None) -> dict:
+    now = time.time() if now is None else now
+    path = pause_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {"at": now + minutes * 60, "set_at": now, "minutes": minutes}
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(record), encoding="utf-8")
+    tmp.replace(path)
+    return read_pause(now)
+
+
+def clear_pause() -> dict:
+    try:
+        pause_path().unlink()
+    except FileNotFoundError:
+        pass
+    return {"at": None}
+
+
+@app.get("/api/pause")
+def api_pause_get() -> JSONResponse:
+    return JSONResponse(content=read_pause())
+
+
+@app.post("/api/pause")
+async def api_pause_set(request: Request) -> JSONResponse:
+    """Schedule a pause ({"minutes": N}) or cancel it ({"minutes": 0} or {"cancel": true})."""
+    if request.headers.get(_PAUSE_HEADER) != "1":
+        raise HTTPException(status_code=400, detail="Missing X-ACC-Pause header.")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Request body must be JSON.")
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object.")
+    if body.get("cancel") is True:
+        return JSONResponse(content=clear_pause())
+    minutes = body.get("minutes")
+    if isinstance(minutes, bool) or not isinstance(minutes, int):
+        raise HTTPException(status_code=400, detail="minutes (whole number) is required.")
+    if minutes == 0:
+        return JSONResponse(content=clear_pause())
+    if minutes < 1 or minutes > _PAUSE_MAX_MINUTES:
+        raise HTTPException(status_code=400, detail="minutes must be between 1 and %d." % _PAUSE_MAX_MINUTES)
+    return JSONResponse(content=write_pause(minutes))
 
 
 # ── Claude desktop app links ────────────────────────────────────────────────────

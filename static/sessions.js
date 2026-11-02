@@ -191,7 +191,7 @@
         state: null, since: null, ask: null, doing: null, note: null,
         turnStartedAt: null, lastTurnMs: null, lastAt: null, openedAt: null,
         lastAction: null, lastStatus: null, bars: [], events: [], steps: null,
-        pauseRequested: false, turnFinished: false, limitMs: null, limitStart: null, limitResult: null,
+        pauseRequested: false, turnFinished: false, limitMs: null, limitStart: null, limitResult: null, pauseNotice: false,
         summary: null
       };
       var open = {};      // approval_id -> {e, t}
@@ -234,8 +234,11 @@
         }
         // A time limit sent mid-turn (queued message), spotted by the hook.
         if (e.action === 'Time limit set' && typeof e.time_limit === 'number') {
-          s.limitMs = e.time_limit * 1000; s.limitStart = t;
+          s.limitMs = e.time_limit * 1000; s.limitStart = t; s.limitResult = null;
+          s.pauseNotice = e.pause === true;  // set from the dashboard's "Go offline in" button
         }
+        // The dashboard's pause was cancelled: the limit it set goes with it.
+        if (e.action === 'Time limit cleared') { s.limitMs = null; s.limitStart = null; s.limitResult = null; s.pauseNotice = false; }
         // A pause request recorded after the fact (the one-time backfill).
         if (e.action === 'Pause requested' && e.pause === true) s.pauseRequested = true;
         if (e.doing && e.doing !== 'Thinking') s.doing = e.doing;
@@ -252,7 +255,7 @@
           s.doing = null;
         }
         // Pause and time-limit markers do not change what the session is doing.
-        if (e.action !== 'Pause requested' && e.action !== 'Time limit set') {
+        if (e.action !== 'Pause requested' && e.action !== 'Time limit set' && e.action !== 'Time limit cleared') {
           lastState = it;
           s.lastAction = e.action || null;
           s.lastStatus = e.status || null;
@@ -412,6 +415,10 @@
   // "Time limit · 6m left · " or "Over the time limit by 2m · " while working.
   function limitLabel(s) {
     if (!s.limitMs || typeof s.limitLeft !== 'number') return '';
+    if (s.pauseNotice) {
+      if (s.limitLeft >= 0) return 'Saving its work \u00b7 ' + dur(Math.max(1000, s.limitLeft)) + ' until you go offline \u00b7 ';
+      return 'Still going ' + dur(-s.limitLeft) + ' past your offline time \u00b7 ';
+    }
     if (s.limitLeft >= 0) return 'Time limit \u00b7 ' + dur(Math.max(1000, s.limitLeft)) + ' left \u00b7 ';
     return 'Over the time limit by ' + dur(-s.limitLeft) + ' \u00b7 ';
   }
@@ -428,11 +435,14 @@
       case 'quiet': return limitLabel(s) + stepLabel(s) + (s.doing || 'Working') + ' · silent ' + dur(now - s.lastAt);
       case 'turn':
         if (s.fresh) return 'Opened, waiting for your first message';
-        if (s.limitResult === 'done') return 'Finished within the ' + dur(s.limitMs) + ' time limit';
+        if (s.limitResult === 'done') {
+          return s.pauseNotice ? 'Work saved before you go offline' : 'Finished within the ' + dur(s.limitMs) + ' time limit';
+        }
         return (s.lastTurnMs !== null ? 'Finished a turn after ' + dur(s.lastTurnMs) : 'Finished a turn') +
           (s.steps && s.steps.done < s.steps.total ? ' · ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '');
       case 'paused':
-        return (s.limitResult === 'paused' ? 'Paused at the ' + dur(s.limitMs) + ' time limit' : 'Paused at your request') +
+        return (s.limitResult === 'paused' ? (s.pauseNotice ? 'Paused for your time offline' : 'Paused at the ' + dur(s.limitMs) + ' time limit')
+          : 'Paused at your request') +
           (s.steps && s.steps.done < s.steps.total ? ' \u00b7 ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '') +
           ' \u00b7 send a message to resume';
       case 'idle':
@@ -455,7 +465,11 @@
       return 'Asked ' + (a.kind === 'Question' ? 'you a question' : 'permission to ' + a.text);
     }
     if (e.action === 'Pause requested') return 'You asked it to pause';
-    if (e.action === 'Time limit set') return 'You set a ' + dur(e.time_limit * 1000) + ' time limit';
+    if (e.action === 'Time limit set') {
+      return e.pause === true ? 'Told to save its work and stop within ' + dur(e.time_limit * 1000)
+        : 'You set a ' + dur(e.time_limit * 1000) + ' time limit';
+    }
+    if (e.action === 'Time limit cleared') return 'The pause was cancelled; carrying on';
     if (e.status === 'started' && e.action === 'Working') {
       if (e.pause === true) return 'You asked it to pause; wrapping up';
       if (!e.doing || e.doing === 'Thinking') return 'You sent a message; working';
