@@ -63,7 +63,8 @@ Configuration (environment)
                      (default ~/.agent-command-center/events.jsonl)
     ACC_STATE_DIR    per-session state for open approvals
                      (default <event file dir>/state)
-    ACC_HOST         override the host label (default: short hostname)
+    ACC_HOST         override the host label (default: on a Mac, the local
+                     hostname from Sharing settings; elsewhere the short hostname)
     ACC_HOOK_DEBUG   set to 1 to log exceptions to <event file dir>/hook.log
     ACC_DETECT_PAUSE set to 1 to flag prompts that ask the session to pause
                      (matched in memory, never written; opt-in; off by default)
@@ -181,10 +182,32 @@ def _now_iso() -> str:
     )
 
 
+# macOS keeps the name from Sharing settings here. The kernel hostname, which
+# socket.gethostname() returns, follows the network's DHCP lease instead and
+# flips to "Mac" on some networks, which split one session into two on the
+# dashboard. ACC_MAC_PREFS points tests at a file of their own.
+_MAC_PREFS = "/Library/Preferences/SystemConfiguration/preferences.plist"
+
+
+def _mac_local_hostname() -> Optional[str]:
+    path = os.environ.get("ACC_MAC_PREFS") or _MAC_PREFS
+    try:
+        import plistlib
+        with open(path, "rb") as f:
+            prefs = plistlib.load(f)
+        name = prefs.get("System", {}).get("Network", {}).get("HostNames", {}).get("LocalHostName")
+    except Exception:
+        return None
+    return name.strip() if isinstance(name, str) and name.strip() else None
+
+
 def _host() -> str:
     override = os.environ.get("ACC_HOST")
     if override:
         return override[:40]
+    local = _mac_local_hostname()
+    if local:
+        return local[:40]
     try:
         return socket.gethostname().split(".")[0][:40]
     except OSError:

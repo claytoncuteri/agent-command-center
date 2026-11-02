@@ -26,6 +26,7 @@ const opts = {};
 if (input.bootedAt) opts.bootedAt = Date.parse(input.bootedAt);
 if (input.names) opts.names = input.names;
 if (input.summaries) opts.summaries = input.summaries;
+if (input.links) opts.links = input.links;
 const out = m.deriveSessions(input.events, now, opts);
 out.sessions.forEach(s => { s.line = m.describe(s, now); s.timeline = s.events.map(m.eventLine); delete s.events; });
 process.stdout.write(JSON.stringify(out));
@@ -48,11 +49,11 @@ def ev(minutes_ago, status, action, session="s1", agent="Demo", **extra):
 
 @unittest.skipIf(NODE is None, "node is not installed")
 class TestSessionModel(unittest.TestCase):
-    def derive(self, events, booted_at=None, names=None, summaries=None):
+    def derive(self, events, booted_at=None, names=None, summaries=None, links=None):
         proc = subprocess.run(
             [NODE, "-e", HARNESS, str(MODEL)],
             input=json.dumps({"now": NOW, "events": events, "bootedAt": booted_at, "names": names,
-                              "summaries": summaries}),
+                              "summaries": summaries, "links": links}),
             capture_output=True, text=True, timeout=30,
         )
         self.assertEqual(proc.returncode, 0, proc.stderr)
@@ -235,6 +236,59 @@ class TestSessionModel(unittest.TestCase):
         self.assertEqual(by["turn"]["state"], "turn", "a finished turn is still ready after a restart")
         self.assertEqual(by["after"]["state"], "work", "activity after the restart is live")
         self.assertEqual(out["counts"]["need"], 0)
+
+    def test_a_host_label_change_does_not_split_a_session(self):
+        # The Mac's hostname flipped mid-session (a new network's DHCP lease).
+        # The ask opened under the old label was answered under the new one.
+        out = self.derive([
+            ev(30, "started", "Working", doing="Thinking", host="OldName"),
+            ev(20, "awaiting_approval", "Needs permission", approval_id="p", detail="permission: Bash", host="OldName"),
+            ev(19, "approved", "Permission granted", approval_id="p", host="Mac"),
+            ev(18, "started", "Working", doing="Running a command", host="Mac"),
+            ev(2, "finished", "Your turn", host="Mac"),
+        ])
+        self.assertEqual(len(out["sessions"]), 1, "one row, not one per host label")
+        s = out["sessions"][0]
+        self.assertEqual((s["state"], s["host"], s["key"]), ("turn", "Mac", "s|s1"))
+        self.assertEqual(out["counts"]["need"], 0)
+
+    def test_events_without_a_session_id_still_group_by_host_and_agent(self):
+        out = self.derive([
+            {**ev(5, "started", "Working", session="x", host="a"), "session": None},
+            {**ev(4, "started", "Working", session="x", host="b"), "session": None},
+        ])
+        self.assertEqual(sorted(s["key"] for s in out["sessions"]), ["a|Demo", "b|Demo"])
+
+    def test_an_hour_of_silence_while_working_means_cut_off_not_stuck(self):
+        out = self.derive([
+            ev(30, "started", "Working", doing="Running a command", session="quiet"),
+            ev(61, "started", "Working", doing="Running a command", session="gone"),
+            ev(61, "failed", "Task failed", detail="exit 1", session="broke"),
+            ev(300, "awaiting_approval", "Needs permission", approval_id="p", detail="permission: Bash", session="ask"),
+        ])
+        by = {s["session"]: s for s in out["sessions"]}
+        self.assertEqual(by["quiet"]["state"], "quiet", "half an hour of silence is still possibly stuck")
+        self.assertEqual(by["gone"]["state"], "idle")
+        self.assertEqual(by["gone"]["interrupted"], "silence")
+        self.assertEqual(by["gone"]["line"], "Was working, then nothing for 1h 1m · open it to carry on")
+        self.assertEqual(by["broke"]["state"], "idle")
+        self.assertTrue(by["broke"]["line"].startswith("Had failed, then nothing for"))
+        self.assertEqual(by["ask"]["state"], "need", "an open ask waits as long as it takes")
+        self.assertEqual(out["counts"]["need"], 1)
+
+    def test_a_session_the_app_archived_is_closed(self):
+        events = [
+            ev(20, "started", "Working", doing="Editing files", session="arch"),
+            ev(15, "awaiting_approval", "Needs permission", approval_id="p", detail="permission: Bash", session="arch"),
+            ev(10, "started", "Working", doing="Editing files", session="live"),
+        ]
+        out = self.derive(events, links={"arch": {"app": "claude://x", "archived": True}, "live": {"archived": False}})
+        by = {s["session"]: s for s in out["sessions"]}
+        self.assertEqual((by["arch"]["state"], by["arch"]["line"], by["arch"]["ask"]), ("closed", "Archived", None))
+        self.assertEqual(by["live"]["state"], "work")
+        self.assertEqual(out["counts"]["need"], 0)
+        out = self.derive(events)
+        self.assertEqual({s["session"]: s["state"] for s in out["sessions"]}["arch"], "need", "without the app's word it waits")
 
     def test_orphan_ask_cleared_at_the_next_turn(self):
         s = self.one([

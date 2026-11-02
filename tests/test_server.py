@@ -100,10 +100,15 @@ class TestViews(unittest.TestCase):
         self.assertEqual(server.page_for("anything/else"), "sessions.html")
 
     def test_classic_and_sessions_paths_always_reachable(self):
-        for view in ("sessions", "classic"):
+        for view in ("sessions", "focus", "classic"):
             server.CONFIG["view"] = view
             self.assertEqual(server.page_for("classic"), "index.html")
             self.assertEqual(server.page_for("/sessions/"), "sessions.html")
+            self.assertEqual(server.page_for("focus"), "focus.html")
+
+    def test_focus_as_default(self):
+        server.CONFIG["view"] = "focus"
+        self.assertEqual(server.page_for(""), "focus.html")
 
     def test_classic_as_default(self):
         server.CONFIG["view"] = "classic"
@@ -122,7 +127,7 @@ class TestViews(unittest.TestCase):
         self.assertEqual(cfg["view"], "sessions")
 
     def test_both_pages_exist(self):
-        for name in ("index.html", "sessions.html", "sessions.js"):
+        for name in ("index.html", "sessions.html", "sessions.js", "focus.html", "focus.js"):
             self.assertTrue((server.STATIC_DIR / name).is_file(), name)
 
 
@@ -497,7 +502,37 @@ class TestClaudeAppLinks(unittest.TestCase):
             "permissionMode": "default", "promptAppendSnapshot": "SECRET-ish text",
         })
         self.assertEqual(self.links(), {"444e0301": {
-            "app": "claude://claude.ai/epitaxy/local_1f9b14d8-71c3-4861-9f20-2068589d2c2d", "web": None}})
+            "app": "claude://claude.ai/epitaxy/local_1f9b14d8-71c3-4861-9f20-2068589d2c2d", "web": None,
+            "focused_at": None, "model": None, "effort": None, "archived": False}})
+
+    def test_focus_model_and_effort_pass_only_when_plain(self):
+        self.record("local_focus.json", {
+            "sessionId": "local_55555555-aaaa", "cliSessionId": "f0cu5ed1-1",
+            "lastFocusedAt": 1793640427994, "model": "claude-opus-5-5", "effort": "high",
+        })
+        self.record("local_odd.json", {
+            "sessionId": "local_66666666-bbbb", "cliSessionId": "0ddf1eld-2",
+            "lastFocusedAt": "yesterday", "model": "<script>alert(1)</script>", "effort": True,
+        })
+        self.record("local_small.json", {
+            "sessionId": "local_77777777-cccc", "cliSessionId": "sma11num-3",
+            "lastFocusedAt": 1793640427, "model": "x" * 41,
+        })
+        links = self.links()
+        self.assertEqual(links["f0cu5ed1"]["focused_at"], 1793640427994)
+        self.assertEqual(links["f0cu5ed1"]["model"], "claude-opus-5-5")
+        self.assertEqual(links["f0cu5ed1"]["effort"], "high")
+        self.assertEqual((links["0ddf1eld"]["focused_at"], links["0ddf1eld"]["model"], links["0ddf1eld"]["effort"]),
+                         (None, None, None))
+        self.assertEqual((links["sma11num"]["focused_at"], links["sma11num"]["model"]), (None, None),
+                         "seconds, not milliseconds; a name longer than 40 characters")
+
+    def test_archived_passes_only_as_a_true_boolean(self):
+        self.record("local_arch.json", {"sessionId": "local_11111111-aaaa", "cliSessionId": "a2ch1ved-1", "isArchived": True})
+        self.record("local_open.json", {"sessionId": "local_22222222-bbbb", "cliSessionId": "0pen0pen-2", "isArchived": False})
+        self.record("local_odd.json", {"sessionId": "local_33333333-cccc", "cliSessionId": "0ddva1ue-3", "isArchived": "yes"})
+        links = self.links()
+        self.assertEqual([links[k]["archived"] for k in ("a2ch1ved", "0pen0pen", "0ddva1ue")], [True, False, False])
 
     def test_remote_control_id_gives_web_link(self):
         self.record("local_x.json", {
@@ -542,7 +577,7 @@ class TestClaudeAppLinks(unittest.TestCase):
     def test_cached_for_a_while_then_refreshed(self):
         self.assertEqual(self.links(), {})
         self.record("local_g.json", {"sessionId": "local_22222222-cccc", "cliSessionId": "feedface-1"})
-        self.assertEqual(self.links(advance=5.0), {}, "within the cache window")
+        self.assertEqual(self.links(advance=2.0), {}, "within the cache window")
         self.assertIn("feedface", self.links(advance=60.0))
 
     def test_missing_root(self):
