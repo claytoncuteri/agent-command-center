@@ -45,7 +45,13 @@ the state, replaced on every change, so only the latest turn exists. Files
 older than 7 days are deleted. Events never carry this text. See save_summary().
 
 It prints nothing (hook stdout can be injected into the model's context) and
-always exits 0, so it can never block or steer a session.
+always exits 0, so it can never block or steer a session. One opt-in
+exception, off by default: with ACC_PAUSE_NOTICE=1, when the dashboard's
+"Go offline in N minutes" button has set a pause, the script prints one fixed
+sentence telling the session to save its work and end its turn by that time
+(once when set, once when the time arrives, once if cancelled). The sentence
+carries a clock time and nothing else, so no text from a file, the dashboard
+or another session can reach the model through it. See pause_notice().
 
 Install (pinned copy, not the working tree)
 -------------------------------------------
@@ -73,6 +79,15 @@ Configuration (environment)
     ACC_SUMMARIES    set to 1 to keep step names and the end-of-turn recap,
                      question and button labels, scrubbed and capped, in
                      <state dir>/<session>.summary.json (opt-in; off by default)
+    ACC_PAUSE_NOTICE set to 1 to tell the session, in a fixed sentence, when
+                     the dashboard has scheduled a pause (opt-in; off by
+                     default). Only on synchronous hook entries: an async
+                     hook's output reaches the session a turn late.
+    ACC_PAUSE_ONLY   set to 1 to run only that pause check and nothing else
+                     (for a second, synchronous PostToolUse entry beside the
+                     usual async one)
+    ACC_PAUSE_FILE   where the dashboard writes the scheduled pause
+                     (default <event file dir>/pause.json)
 
 Event mapping
 -------------
@@ -899,6 +914,121 @@ def close_approval(
     return True
 
 
+# ── Pause notice (opt-in) ───────────────────────────────────────────────────────
+#
+# "Go offline in 15 minutes", pressed on the dashboard, writes one small file
+# ({"at": <epoch seconds>}) beside the event file. With ACC_PAUSE_NOTICE=1 a
+# synchronous hook tells the session, once, to save its work and end its turn
+# before then; once more when the time arrives; and once if the pause is
+# cancelled. The notice is a fixed sentence built from that one number, and a
+# "Time limit set" event marks the session as told, so the dashboard counts
+# down beside it and shows Paused or Ready when its turn ends.
+
+_PAUSE_GRACE_SECONDS = 2 * 3600  # a pause this long past is forgotten
+_PAUSE_NOTICE_EVENTS = ("SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse")
+
+
+def pause_file() -> str:
+    path = os.environ.get("ACC_PAUSE_FILE") or os.path.join(os.path.dirname(event_file()), "pause.json")
+    return os.path.expanduser(path)
+
+
+def pause_notice_on() -> bool:
+    return os.environ.get("ACC_PAUSE_NOTICE") == "1"
+
+
+def scheduled_pause(now: float) -> Optional[float]:
+    """Epoch seconds of the pause set on the dashboard; None when none, malformed or long past."""
+    try:
+        with open(pause_file(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    at = data.get("at") if isinstance(data, dict) else None
+    if isinstance(at, bool) or not isinstance(at, (int, float)):
+        return None
+    if now > at + _PAUSE_GRACE_SECONDS:
+        return None
+    return float(at)
+
+
+def _clock(at: float) -> str:
+    return datetime.fromtimestamp(at).strftime("%H:%M")
+
+
+def pause_notice_text(stage: str, at: float, now: float) -> str:
+    when = _clock(at)
+    if stage == "coming":
+        mins = max(1, int(round((at - now) / 60.0)))
+        return (
+            "Notice from the dashboard: the user will close this computer and go offline at {} "
+            "(in about {} minute{}). Before then, save your work: commit what is ready to your "
+            "branch, write down anything you would otherwise lose, finish or stop the step you are "
+            "on, start nothing that cannot finish in time, and end your turn with a short recap of "
+            "what is done and what is left. Do not wait on questions that cannot be answered before "
+            "then.".format(when, mins, "" if mins == 1 else "s")
+        )
+    if stage == "now":
+        return (
+            "Notice from the dashboard: it is {} and the user is going offline now. Save your work "
+            "and end your turn at once with a one-line recap.".format(when)
+        )
+    return "Notice from the dashboard: the pause planned for {} is cancelled. Carry on as before.".format(when)
+
+
+def pause_notice(state: Dict[str, Any], now: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    """
+    The notice this session is owed, if any: {"stage", "at", "text"}. Updates
+    state["pause_told"] so each stage is said once per scheduled time.
+    """
+    if not pause_notice_on():
+        return None
+    import time
+    now = time.time() if now is None else now
+    at = scheduled_pause(now)
+    told = state.get("pause_told") if isinstance(state.get("pause_told"), dict) else None
+    if at is None:
+        if told is None:
+            return None
+        state.pop("pause_told", None)
+        if told.get("stage") != "coming":
+            return None  # told to stop already, or the pause just aged out
+        old_at = told.get("at")
+        old_at = float(old_at) if isinstance(old_at, (int, float)) else now
+        return {"stage": "cancelled", "at": old_at, "text": pause_notice_text("cancelled", old_at, now)}
+    stage = "now" if now >= at else "coming"
+    if told and told.get("at") == at and told.get("stage") in (stage, "now"):
+        return None
+    state["pause_told"] = {"at": at, "stage": stage}
+    return {"stage": stage, "at": at, "text": pause_notice_text(stage, at, now)}
+
+
+def _say_pause_notice(data: Dict[str, Any], session_id: str) -> None:
+    """Print the owed notice as hook JSON and mark the session on the dashboard."""
+    event = data.get("hook_event_name")
+    if not pause_notice_on() or event not in _PAUSE_NOTICE_EVENTS:
+        return
+    import time
+    now = time.time()
+    state = load_state(session_id)
+    notice = pause_notice(state, now)
+    if notice is None:
+        return
+    save_state(session_id, state)
+    cwd = data.get("cwd") if isinstance(data.get("cwd"), str) else ""
+    agent = agent_name(cwd)
+    where = place(cwd)
+    if notice["stage"] == "coming":
+        append_event(make_event(agent=agent, session_id=session_id, action="Time limit set", status="info",
+                                where=where, time_limit=max(1, int(notice["at"] - now)), pause=True))
+    elif notice["stage"] == "cancelled":
+        append_event(make_event(agent=agent, session_id=session_id, action="Time limit cleared", status="info",
+                                where=where))
+    out = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": notice["text"]}}
+    sys.stdout.write(json.dumps(out) + "\n")
+    sys.stdout.flush()
+
+
 # ── Hook dispatch ───────────────────────────────────────────────────────────────
 
 
@@ -951,7 +1081,9 @@ def handle(data: Dict[str, Any]) -> None:
     if not isinstance(session_id, str) or not session_id:
         session_id = "unknown"
     with _SessionLock(session_id):
-        _dispatch(data, session_id)
+        if os.environ.get("ACC_PAUSE_ONLY") != "1":
+            _dispatch(data, session_id)
+        _say_pause_notice(data, session_id)
 
 
 def _dispatch(data: Dict[str, Any], session_id: str) -> None:

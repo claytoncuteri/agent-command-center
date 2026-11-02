@@ -228,6 +228,7 @@ a { color: inherit; }
 </header>
 
 <div class="offline" id="offline" hidden role="status"></div>
+<div id="pause" aria-live="polite"></div>
 <div class="alerts" id="alerts" aria-live="polite"></div>
 
 <main id="focus" style="display:contents"></main>
@@ -236,6 +237,7 @@ a { color: inherit; }
 <footer class="foot" id="foot"></footer>
 
 <script src="/static/sessions.js"></script>
+<script src="/static/pause.js"></script>
 <script src="/static/focus.js"></script>
 <script>
 (function () {
@@ -563,6 +565,7 @@ a { color: inherit; }
   }).catch(function () { setLive('off'); });
   connect();
   loadLinks(); loadSummaries();
+  if (window.ACCPause) ACCPause.mount($('pause'), { onChange: function () { render(); } });
   setInterval(tick, 1000);
   setInterval(function () { render(); showOffline(); }, 15000);
   setInterval(loadLinks, 5000);

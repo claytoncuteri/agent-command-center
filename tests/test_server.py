@@ -619,3 +619,75 @@ class TestClaudeAppLinks(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestPause(unittest.TestCase):
+    """The "Go offline in N minutes" file and endpoint."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patch = mock.patch.dict(server.CONFIG, {"event_file": os.path.join(self.tmp.name, "events.jsonl")})
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def call(self, method, body=None, header="1"):
+        import asyncio
+        sent = []
+        raw = b"" if body is None else (body if isinstance(body, bytes) else json.dumps(body).encode())
+
+        async def receive():
+            return {"type": "http.request", "body": raw, "more_body": False}
+
+        async def send(msg):
+            sent.append(msg)
+
+        headers = [(b"host", b"127.0.0.1:7070"), (b"content-type", b"application/json")]
+        if header is not None:
+            headers.append((b"x-acc-pause", header.encode()))
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method,
+                 "scheme": "http", "path": "/api/pause", "raw_path": b"/api/pause", "query_string": b"",
+                 "root_path": "", "headers": headers, "client": ("127.0.0.1", 5000), "server": ("127.0.0.1", 7070)}
+        asyncio.run(server.app(scope, receive, send))
+        status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+        payload = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+        return status, json.loads(payload or b"null")
+
+    def test_nothing_scheduled(self):
+        self.assertEqual(self.call("GET"), (200, {"at": None}))
+        self.assertFalse(server.pause_path().exists())
+
+    def test_schedule_then_read_then_cancel(self):
+        import time
+        before = time.time()
+        status, body = self.call("POST", {"minutes": 15})
+        self.assertEqual(status, 200)
+        self.assertTrue(before + 15 * 60 <= body["at"] <= time.time() + 15 * 60)
+        self.assertEqual(body["minutes"], 15)
+        self.assertEqual(json.loads(server.pause_path().read_text())["minutes"], 15)
+        self.assertEqual(self.call("GET")[1]["at"], body["at"])
+        self.assertEqual(self.call("POST", {"cancel": True}), (200, {"at": None}))
+        self.assertFalse(server.pause_path().exists())
+        self.call("POST", {"minutes": 5})
+        self.assertEqual(self.call("POST", {"minutes": 0}), (200, {"at": None}))
+        self.assertFalse(server.pause_path().exists())
+
+    def test_header_and_body_are_checked(self):
+        self.assertEqual(self.call("POST", {"minutes": 15}, header=None)[0], 400)
+        self.assertEqual(self.call("POST", {"minutes": 15}, header="yes")[0], 400)
+        for bad in ({"minutes": "15"}, {"minutes": 1.5}, {"minutes": True}, {"minutes": 721}, {"minutes": -1}, {}, []):
+            self.assertEqual(self.call("POST", bad)[0], 400, bad)
+        self.assertEqual(self.call("POST", b"{not json")[0], 400)
+        self.assertFalse(server.pause_path().exists())
+
+    def test_stale_or_malformed_file_reads_as_nothing(self):
+        import time
+        server.pause_path().parent.mkdir(parents=True, exist_ok=True)
+        server.pause_path().write_text(json.dumps({"at": time.time() - 3 * 3600}))
+        self.assertEqual(server.read_pause(), {"at": None})
+        for body in ('{"at": "x"}', '{"at": true}', "[]", "nope"):
+            server.pause_path().write_text(body)
+            self.assertEqual(server.read_pause(), {"at": None}, body)
+        self.assertEqual(server.read_pause(now=1000.0), {"at": None})

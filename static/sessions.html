@@ -244,6 +244,7 @@ button { font: inherit; color: inherit; }
   </header>
 
   <div class="offline" id="offline" hidden role="status"></div>
+  <div id="pause" aria-live="polite"></div>
   <section class="summary" id="summary" aria-label="Sessions by state"></section>
   <nav class="chips" id="chips" aria-label="Filter by project"></nav>
 
@@ -284,6 +285,7 @@ button { font: inherit; color: inherit; }
 </div>
 
 <script src="/static/sessions.js"></script>
+<script src="/static/pause.js"></script>
 <script>
 (function () {
   'use strict';
@@ -644,6 +646,7 @@ button { font: inherit; color: inherit; }
   loadLinks();
   setInterval(function () { render(); showOffline(); }, 15000);
   setInterval(loadLinks, 60000);
+  if (window.ACCPause) ACCPause.mount($('pause'), { onChange: function () { render(); } });
 })();
 </script>
 </body>
