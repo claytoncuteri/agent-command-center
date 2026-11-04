@@ -828,3 +828,15 @@ class TestResumeAll(unittest.TestCase):
         self.assertEqual([r["session"] for r in body["sessions"]], ["aaaaaaaa"])
         server.resume_path().write_text(json.dumps({"at": now, "since": datetime(2026, 11, 4, 11, 50, tzinfo=timezone.utc).timestamp()}))
         self.assertEqual(self.call("GET", "/api/paused")[1]["sessions"], [], "told before this pause")
+
+
+class TestClosingMessageInSummary(unittest.TestCase):
+    def test_reply_passes_through_capped(self):
+        doc = {"steps": [], "steps_total": 0, "recap": "r", "ask": "q?", "options": [], "blocked": False,
+               "reply": "Para one.\n\nPara two. " + "x" * 2000}
+        out = server._clean_summary(doc)
+        self.assertTrue(out["reply"].startswith("Para one.\n\nPara two."))
+        self.assertEqual(len(out["reply"]), 1500)
+        self.assertIsNone(server._clean_summary({"reply": 7})["reply"])
+        self.assertIsNone(server._clean_summary({"reply": "  "})["reply"])
+        self.assertIsNone(server._clean_summary({})["reply"])

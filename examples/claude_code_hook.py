@@ -44,6 +44,14 @@ token-shaped strings) and capped, then kept in one file per session beside
 the state, replaced on every change, so only the latest turn exists. Files
 older than 7 days are deleted. Events never carry this text. See save_summary().
 
+A further opt-in, off by default: with ACC_READ_REPLY=1 (and ACC_SUMMARIES=1)
+the script keeps the session's closing message, the text it wrote after its
+last tool call of the turn, read from the history file at the turn's end,
+scrubbed the same way and capped at REPLY_MAX characters, in the same summary
+file. It gives the dashboard the why behind the one-line question. Never a
+tool call, a tool result, a thinking block or a subagent's text. See
+latest_reply().
+
 It prints nothing (hook stdout can be injected into the model's context) and
 always exits 0, so it can never block or steer a session. One opt-in
 exception, off by default: with ACC_PAUSE_NOTICE=1, when the dashboard's
@@ -80,6 +88,9 @@ Configuration (environment)
     ACC_SUMMARIES    set to 1 to keep step names and the end-of-turn recap,
                      question and button labels, scrubbed and capped, in
                      <state dir>/<session>.summary.json (opt-in; off by default)
+    ACC_READ_REPLY   set to 1 to keep the session's closing message of each
+                     turn (scrubbed, capped) in the summary file; needs
+                     ACC_SUMMARIES=1 (opt-in; off by default)
     ACC_PAUSE_NOTICE set to 1 to tell the session, in a fixed sentence, when
                      the dashboard has scheduled a pause (opt-in; off by
                      default). Only on synchronous hook entries: an async
@@ -782,6 +793,86 @@ def latest_human_message(path: Any) -> Optional[str]:
     return None
 
 
+# ── The closing message (opt-in) ────────────────────────────────────────────────
+#
+# With ACC_READ_REPLY=1 the turn's last words: the text the session wrote
+# after its final tool call, which is where it explains the question its
+# wrap-up asks in one line. Read from the history file's tail at Stop, kept
+# in the summary file (scrubbed, capped), never in an event.
+
+REPLY_MAX = 1500
+_REPLY_TAIL_BYTES = 1024 * 1024
+
+
+def replies_on() -> bool:
+    return os.environ.get("ACC_READ_REPLY") == "1"
+
+
+def scrub_block(value: Any, cap: int) -> Optional[str]:
+    """scrub() line by line, keeping line and paragraph breaks, capped."""
+    if not isinstance(value, str):
+        return None
+    paras = []
+    for para in re.split(r"\n\s*\n", value[:_SCRUB_INPUT_MAX]):
+        lines = [scrub(line, cap) for line in para.splitlines()]
+        lines = [x for x in lines if x]
+        if lines:
+            paras.append("\n".join(lines))
+    text = "\n\n".join(paras)[:cap].rstrip()
+    return text or None
+
+
+def _assistant_text(rec: Dict[str, Any]) -> Optional[str]:
+    """The text blocks of one assistant record, else None (tool calls, thinking, subagents)."""
+    if rec.get("type") != "assistant" or rec.get("isSidechain") or rec.get("isMeta"):
+        return None
+    msg = rec.get("message")
+    if not isinstance(msg, dict) or msg.get("role") != "assistant":
+        return None
+    content = msg.get("content")
+    if isinstance(content, str):
+        text = content
+    elif isinstance(content, list):
+        text = "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
+    else:
+        return None
+    return text if text.strip() else None
+
+
+def latest_reply(path: Any) -> Optional[str]:
+    """
+    Opt-in (ACC_READ_REPLY=1): the newest text the session wrote, from the
+    history file's tail. A message that only calls tools is skipped, so this is
+    the closing message once the turn has ended.
+    """
+    real = _safe_history_path(path)
+    if real is None:
+        return None
+    try:
+        size = os.path.getsize(real)
+        with open(real, "rb") as f:
+            for start in ((max(0, size - _REPLY_TAIL_BYTES), 0) if size > _REPLY_TAIL_BYTES else (0,)):
+                f.seek(start)
+                if start:
+                    f.readline()  # skip a partial first line
+                found = None
+                for line in f:
+                    if b'"assistant"' not in line or b'"text"' not in line:
+                        continue
+                    try:
+                        rec = json.loads(line)
+                    except ValueError:
+                        continue
+                    text = _assistant_text(rec) if isinstance(rec, dict) else None
+                    if text is not None:
+                        found = text
+                if found is not None:
+                    return found
+    except OSError:
+        return None
+    return None
+
+
 # "you have 10 minutes to complete this task, if not done then please pause":
 # a time limit, not a pause request. Only the limit (in seconds) is kept.
 _LIMIT_PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
@@ -1256,6 +1347,12 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
         emit("Your turn", "finished", title=title_from_transcript(data.get("transcript_path")),
              pause=pause or None)
         set_doing(None)
+        if summaries_on() and replies_on():
+            reply = scrub_block(latest_reply(data.get("transcript_path")), REPLY_MAX)
+            doc = load_summary(session_id)
+            if reply != doc.get("reply"):
+                doc["reply"] = reply
+                save_summary(session_id, doc)
 
     elif event == "SessionEnd":
         close_approval(agent, session_id, state, where=where, status="declined", result="not run")

@@ -1280,3 +1280,108 @@ class TestResumeNotice(TestPauseNotice):
         self.assertIn("the user is back", out)
         self.assertNotIn(SENTINEL, out)
         self.assertNotIn(SENTINEL, self.raw())
+
+
+class TestClosingMessage(HookCase):
+    """Opt-in (ACC_READ_REPLY=1 with ACC_SUMMARIES=1): the turn's closing message, scrubbed and capped, in the summary."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = os.path.join(self.tmp.name, "home")
+        self.proj = os.path.join(self.home, ".claude", "projects", "-p")
+        os.makedirs(self.proj)
+        self.home_patch = mock.patch.dict(os.environ, {"HOME": self.home, "ACC_SUMMARIES": "1", "ACC_READ_REPLY": "1"})
+        self.home_patch.start()
+
+    def tearDown(self):
+        self.home_patch.stop()
+        super().tearDown()
+
+    def history(self, *recs):
+        path = os.path.join(self.proj, "s.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            for r in recs:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        return path
+
+    @staticmethod
+    def said(text, **extra):
+        rec = {"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+        rec.update(extra)
+        return rec
+
+    @staticmethod
+    def called(name):
+        return {"type": "assistant", "message": {"role": "assistant", "content": [
+            {"type": "thinking", "thinking": "private"}, {"type": "tool_use", "name": name, "input": {}}]}}
+
+    @staticmethod
+    def result(text):
+        return {"type": "user", "message": {"role": "user", "content": [{"type": "tool_result", "content": text}]}}
+
+    def summary(self, session_id="sess-0001-abcdef"):
+        path = hook._summary_path(session_id)
+        if not os.path.exists(path):
+            return {}  # nothing kept: no file is written for an empty reply
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_off_by_default(self):
+        os.environ.pop("ACC_READ_REPLY")
+        path = self.history(self.said("Earlier words."), self.called("Bash"), self.result("ok"), self.said("The closing message."))
+        self.run_hook("UserPromptSubmit", prompt="go")
+        self.run_hook("Stop", transcript_path=path)
+        self.assertFalse(os.path.exists(hook._summary_path("sess-0001-abcdef")), "nothing to keep without the flag")
+
+    def test_needs_summaries_on(self):
+        os.environ.pop("ACC_SUMMARIES")
+        path = self.history(self.said("The closing message."))
+        self.run_hook("Stop", transcript_path=path)
+        self.assertFalse(os.path.exists(hook._summary_path("sess-0001-abcdef")))
+
+    def test_the_last_text_after_the_last_tool_call(self):
+        path = self.history(
+            self.said("Earlier words " + SENTINEL + "-a"),
+            self.called("Bash"), self.result("tool output " + SENTINEL + "-b"),
+            self.said("Subagent words " + SENTINEL + "-c", isSidechain=True),
+            self.said("First paragraph of the answer.\n\nSecond paragraph, with a list:\n- one\n- two"),
+            self.called("wrap_up"), self.result("shown"),
+        )
+        self.run_hook("Stop", transcript_path=path)
+        doc = self.summary()
+        self.assertEqual(doc["reply"], "First paragraph of the answer.\n\nSecond paragraph, with a list:\n- one\n- two")
+        self.assertNotIn(SENTINEL, json.dumps(doc))
+        self.assertNotIn(SENTINEL, self.raw())
+
+    def test_scrubbed_and_capped(self):
+        long = "Reach me at someone@example.org or token sk-live-" + "A1b2C3d4" * 6 + ". " + ("word " * 400)
+        path = self.history(self.said(long))
+        self.run_hook("Stop", transcript_path=path)
+        reply = self.summary()["reply"]
+        self.assertIn("[email]", reply)
+        self.assertNotIn("example.org", reply)
+        self.assertNotIn("A1b2C3d4A1b2", reply)
+        self.assertLessEqual(len(reply), hook.REPLY_MAX)
+
+    def test_kept_across_the_next_prompt_and_replaced_next_turn(self):
+        path = self.history(self.said("Turn one, closing."))
+        self.run_hook("Stop", transcript_path=path)
+        self.run_hook("UserPromptSubmit", prompt="next")
+        self.assertEqual(self.summary()["reply"], "Turn one, closing.")
+        path = self.history(self.said("Turn one, closing."), self.called("Edit"), self.result("ok"), self.said("Turn two, closing."))
+        self.run_hook("Stop", transcript_path=path)
+        self.assertEqual(self.summary()["reply"], "Turn two, closing.")
+
+    def test_tool_only_or_missing_history_leaves_it_empty(self):
+        path = self.history(self.called("Bash"), self.result("ok"))
+        self.run_hook("Stop", transcript_path=path)
+        self.assertIsNone(self.summary().get("reply"))
+        self.run_hook("Stop", transcript_path=os.path.join(self.tmp.name, "outside.jsonl"))
+        self.assertIsNone(self.summary().get("reply"))
+        self.run_hook("Stop")
+        self.assertIsNone(self.summary().get("reply"))
+
+    def test_reader_reads_the_tail_only(self):
+        path = self.history(*([self.said("old " * 2000)] * 200 + [self.said("The newest words.")]))
+        self.assertGreater(os.path.getsize(path), hook._REPLY_TAIL_BYTES)
+        self.assertEqual(hook.latest_reply(path), "The newest words.")

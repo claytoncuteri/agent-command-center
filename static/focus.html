@@ -139,6 +139,9 @@ a { color: inherit; }
 
 /* A question or recap in the session's own words. */
 .decision { border-color: rgba(240,211,140,.5); background: linear-gradient(180deg, rgba(240,211,140,.10), var(--glass) 40%, var(--glass2)); }
+.said { margin-top: .6rem; font-size: .92rem; color: var(--sub); }
+.said summary { cursor: pointer; color: var(--text); font-weight: 600; font-size: .85rem; }
+.said p { margin: .45rem 0 0; white-space: normal; }
 .decision h2 { color: var(--gold); }
 .decision .q { font-size: 1.25rem; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 .opts { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .7rem; }
@@ -346,15 +349,29 @@ a { color: inherit; }
       (sm.turnAt ? '<span>' + esc(M.rel(now() - sm.turnAt)) + ' ago</span>' : '') + '</h2>' +
       '<p class="q">' + esc(sm.ask) + '</p>' +
       (opts ? '<div class="opts">' + opts + '<small>Its suggested answer first. Answer in Claude.</small></div>' : '') +
+      replyHtml(sm, 'Why it asks, in its own words') +
       '</section>';
+  }
+
+  // The closing message of the last turn (opt-in, ACC_READ_REPLY=1), as plain
+  // paragraphs; open by default under a question, folded under a recap.
+  function replyHtml(sm, label) {
+    if (!sm.reply) return '';
+    var paras = sm.reply.split(/\n{2,}/).map(function (p) {
+      // Plain text, with the one markdown mark worth keeping: **bold**.
+      return '<p>' + esc(p).replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>').replace(/\n/g, '<br>') + '</p>';
+    }).join('');
+    return '<details class="said"' + (sm.ask ? ' open' : '') + '><summary>' + label + '</summary>' + paras + '</details>';
   }
 
   function recapHtml(s) {
     var sm = s.summary;
-    if (!sm || !sm.recap) return '';
-    return '<section class="card recap"><h2>Recap, in its own words' +
+    if (!sm || (!sm.recap && !sm.reply)) return '';
+    return '<section class="card recap"><h2>' + (sm.recap ? 'Recap, in its own words' : 'What it said last') +
       (sm.turnAt ? '<span>ended ' + esc(M.rel(now() - sm.turnAt)) + ' ago</span>' : '') + '</h2>' +
-      '<p>' + esc(sm.recap) + '</p></section>';
+      (sm.recap ? '<p>' + esc(sm.recap) + '</p>' : '') +
+      (sm.ask ? '' : replyHtml(sm, 'Its closing message')) +
+      '</section>';
   }
 
   function planHtml(s) {
