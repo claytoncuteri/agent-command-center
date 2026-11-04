@@ -493,7 +493,7 @@
     return {
       steps: steps,
       stepsTotal: typeof x.steps_total === 'number' ? x.steps_total : steps.length,
-      recap: str(x.recap), ask: str(x.ask),
+      recap: str(x.recap), ask: str(x.ask), reply: str(x.reply),
       options: Array.isArray(x.options) ? x.options.filter(function (o) { return str(o); }) : [],
       blocked: x.blocked === true,
       turnAt: str(x.turn_at) ? Date.parse(x.turn_at) || null : null

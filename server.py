@@ -799,6 +799,7 @@ def _clean_summary(doc: dict) -> dict:
         "ask": _text(doc.get("ask"), 100),
         "options": options,
         "blocked": doc.get("blocked") is True,
+        "reply": _text(doc.get("reply"), 1500),
         "turn_at": _stamp(doc.get("turn_at")),
         "updated": _stamp(doc.get("updated")),
     }

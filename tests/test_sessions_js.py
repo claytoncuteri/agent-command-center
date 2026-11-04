@@ -546,6 +546,11 @@ class TestSessionModel(unittest.TestCase):
         self.assertEqual((s["recap"], s["ask"], s["options"], s["blocked"]), ("Done.", "Go?", ["Go", "Wait"], True))
         self.assertEqual([x["name"] for x in s["steps"]], ["Read", "Write"])
         self.assertIsNone(by["other000"]["summary"])
+        said = dict(good, reply="Because the two fixes conflict.\n\nPick one.")
+        self.assertEqual(self.derive([ev(5, "finished", "Your turn", session="abcd1234")],
+                                     summaries={"abcd1234": said})["sessions"][0]["summary"]["reply"], said["reply"])
+        self.assertIsNone(self.derive([ev(5, "finished", "Your turn", session="abcd1234")],
+                                      summaries={"abcd1234": dict(good, reply=3)})["sessions"][0]["summary"]["reply"])
 
     def test_bad_summaries_are_ignored(self):
         odd = self.derive([ev(5, "finished", "Your turn", session="abcd1234")],

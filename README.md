@@ -404,6 +404,20 @@ did and what it needs from you, in the session's own words.
 - **Where it lives:** one `<session>.summary.json` per session in the hook's state folder (0600, folder 0700), replaced whole on every change, so only the latest turn exists. Files untouched for 7 days are deleted when a session starts. Events never carry this text.
 - **Who sees it:** the same viewers as the dashboard (this machine, and `remote_clients`). The terminal has no end-of-turn summary, so terminal sessions show step names only.
 
+**The closing message (opt-in, on top of summaries).** The wrap-up's question
+is one line by design, and the why comes in the message the session writes
+right after it. Add `ACC_READ_REPLY=1 ` beside `ACC_SUMMARIES=1` and the hook
+keeps that message too: at the end of each turn it reads the newest text the
+session wrote from the history file (never a tool call, a tool result, a
+thinking block or a subagent's text), scrubs it like the recap (emails, URL
+passwords and queries, labelled values, long numbers, token-shaped strings),
+caps it at 1,500 characters and stores it in the same summary file, replaced
+every turn. The focus page shows it under the question as "Why it asks, in
+its own words", and folded under the recap when there is no question. It is
+the session's own words to you, so it can quote whatever the session was
+working on; keep the dashboard on your own machine or tailnet, as the rest of
+this README assumes.
+
 **Paused sessions (opt-in).** Prefix each hook command with
 `ACC_DETECT_PAUSE=1 ` too, and a message asking a session to pause ("please
 pause", "can you pause while I walk through the airport and we pick up later",
