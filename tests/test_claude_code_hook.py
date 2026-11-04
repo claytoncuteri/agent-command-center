@@ -1217,3 +1217,66 @@ class TestPauseNotice(HookCase):
         out, evs = self.speak("PreToolUse", tool_name="Bash")
         self.assertEqual(out, "")
         self.assertEqual(evs[-1]["doing"], "Running a command")
+
+
+class TestResumeNotice(TestPauseNotice):
+    """"Resume all" on the dashboard: a session that was told to stop hears that the user is back."""
+
+    def setUp(self):
+        super().setUp()
+        self.resume_file = os.path.join(self.tmp.name, "resume.json")
+        os.environ["ACC_RESUME_FILE"] = self.resume_file
+
+    def resume(self, seconds_ago=0, **extra):
+        import time
+        body = {"at": time.time() - seconds_ago}
+        body.update(extra)
+        with open(self.resume_file, "w", encoding="utf-8") as f:
+            json.dump(body, f)
+        if os.path.exists(self.pause_file):
+            os.remove(self.pause_file)
+
+    def test_told_then_resumed(self):
+        self.schedule(900)
+        self.speak("PostToolUse", tool_name="Bash")
+        self.resume()
+        out, evs = self.speak("UserPromptSubmit", prompt="hi")
+        text = self.notice(out, "UserPromptSubmit")
+        self.assertIn("the user is back", text)
+        self.assertIn("Carry on from where you paused", text)
+        self.assertEqual((evs[-1]["action"], evs[-1]["result"]), ("Time limit cleared", "resumed"))
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual(out, "", "said once")
+        self.assertNotIn("pause_told", hook.load_state("sess-0001-abcdef"))
+
+    def test_resumed_after_the_time_arrived(self):
+        self.schedule(60)
+        self.speak("PostToolUse", tool_name="Bash")
+        self.schedule(-5)
+        self.speak("PostToolUse", tool_name="Bash")  # "going offline now"
+        self.resume()
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("the user is back", self.notice(out, "PostToolUse"))
+
+    def test_never_told_hears_nothing(self):
+        self.resume()
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertEqual(out, "")
+        self.assertNotIn("Time limit cleared", [e["action"] for e in evs])
+
+    def test_stale_resume_is_a_cancel_not_a_return(self):
+        self.schedule(900)
+        self.speak("PostToolUse", tool_name="Bash")
+        self.resume(seconds_ago=3 * 3600)
+        out, evs = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("is cancelled", self.notice(out, "PostToolUse"))
+        self.assertEqual(evs[-1]["result"], "cancelled")
+
+    def test_nothing_from_the_resume_file_reaches_the_session(self):
+        self.schedule(900)
+        self.speak("PostToolUse", tool_name="Bash")
+        self.resume(note=SENTINEL)
+        out, _ = self.speak("PostToolUse", tool_name="Bash")
+        self.assertIn("the user is back", out)
+        self.assertNotIn(SENTINEL, out)
+        self.assertNotIn(SENTINEL, self.raw())

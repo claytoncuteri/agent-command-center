@@ -48,9 +48,13 @@
       if (busy) {
         h = '<span class="note">One moment…</span>';
       } else if (typeof pause.at === 'number') {
-        h = '<span class="pill' + (pause.at * 1000 < Date.now() ? ' over' : '') + '" id="pz-pill">' + pillText() + '</span>';
-        h += '<span class="note">Sessions are told to save their work and stop.</span>';
-        h += '<button data-act="cancel">Cancel</button>';
+        var over = pause.at * 1000 < Date.now();
+        h = '<span class="pill' + (over ? ' over' : '') + '" id="pz-pill">' + pillText() + '</span>';
+        h += '<span class="note">' + (over ? 'Sessions that stopped wait for you.' : 'Sessions are told to save their work and stop.') + '</span>';
+        h += '<button class="go" data-act="resume">I\u2019m back: resume all</button>';
+        if (!over) h += '<button data-act="cancel">Cancel</button>';
+      } else if (resumeNote()) {
+        h = resumeNote() + '<button data-act="open">Go offline in\u2026</button>';
       } else if (editing) {
         h = '<label>Go offline in <input id="pz-min" type="number" inputmode="numeric" min="1" max="720" value="15"> min</label>' +
             '<button class="go" data-act="start">Tell every session</button><button data-act="close">Never mind</button>';
@@ -73,6 +77,18 @@
         ? 'Offline at ' + esc(clock(pause.at)) + ' · <b>' + dur(left) + '</b> left'
         : 'Offline time was ' + esc(clock(pause.at)) + ' · <b>' + dur(-left) + '</b> ago';
     }
+    // After "Resume all": what the bridge session did with it, for a while.
+    function resumeNote() {
+      var r = pause.resume;
+      if (!r || typeof r.at !== 'number' || Date.now() - r.at * 1000 > 15 * 60 * 1000) return '';
+      if (typeof r.done_at === 'number') {
+        var n = typeof r.woken === 'number' ? r.woken : 0;
+        return '<span class="pill">' + (n === 1 ? '1 session resumed' : n + ' sessions resumed') + ' at ' + esc(clock(r.done_at)) + '</span>';
+      }
+      return '<span class="pill">Resume asked at ' + esc(clock(r.at)) + '</span>' +
+        '<span class="note">The bridge session wakes the ones that stopped. If nothing happens, it is not running.</span>';
+    }
+
     function tick() {
       var pill = document.getElementById('pz-pill');
       if (!pill || typeof pause.at !== 'number') return;
@@ -80,10 +96,10 @@
       pill.classList.toggle('over', pause.at * 1000 < Date.now());
     }
 
-    function send(body) {
+    function send(body, url) {
       busy = true; error = null; render();
-      return fetch('/api/pause', {
-        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-ACC-Pause': '1' }, body: JSON.stringify(body)
+      return fetch(url || '/api/pause', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-ACC-Pause': '1' }, body: JSON.stringify(body || {})
       }).then(function (r) {
         if (!r.ok) return r.json().then(function (j) { throw new Error((j && j.detail) || ('HTTP ' + r.status)); },
                                         function () { throw new Error('HTTP ' + r.status); });
@@ -95,9 +111,9 @@
 
     function load() {
       return fetch('/api/pause').then(function (r) { return r.json(); }).then(function (p) {
-        var before = pause.at;
+        var before = JSON.stringify([pause.at, pause.resume || null]);
         pause = p || { at: null };
-        if (before !== pause.at) { render(); if (opts.onChange) opts.onChange(pause); }
+        if (before !== JSON.stringify([pause.at, pause.resume || null])) { render(); if (opts.onChange) opts.onChange(pause); }
       }).catch(function () {});
     }
 
@@ -111,6 +127,7 @@
         if (!(n >= 1 && n <= 720)) { error = 'Enter 1 to 720 minutes'; render(); return; }
         send({ minutes: n });
       } else if (act === 'cancel') send({ cancel: true });
+      else if (act === 'resume') send(null, '/api/resume');
     });
     el.addEventListener('keydown', function (ev) {
       if (ev.key === 'Enter' && ev.target && ev.target.id === 'pz-min') {

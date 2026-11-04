@@ -469,7 +469,9 @@
       return e.pause === true ? 'Told to save its work and stop within ' + dur(e.time_limit * 1000)
         : 'You set a ' + dur(e.time_limit * 1000) + ' time limit';
     }
-    if (e.action === 'Time limit cleared') return 'The pause was cancelled; carrying on';
+    if (e.action === 'Time limit cleared') {
+      return e.result === 'resumed' ? 'You came back; carrying on from where it paused' : 'The pause was cancelled; carrying on';
+    }
     if (e.status === 'started' && e.action === 'Working') {
       if (e.pause === true) return 'You asked it to pause; wrapping up';
       if (!e.doing || e.doing === 'Thinking') return 'You sent a message; working';

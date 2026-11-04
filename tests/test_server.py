@@ -691,3 +691,140 @@ class TestPause(unittest.TestCase):
             server.pause_path().write_text(body)
             self.assertEqual(server.read_pause(), {"at": None}, body)
         self.assertEqual(server.read_pause(now=1000.0), {"at": None})
+
+
+class TestResumeAll(unittest.TestCase):
+    """"Resume all": the request file, the bridge's report, and the list of sessions that stopped."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.patch = mock.patch.dict(server.CONFIG, {"event_file": os.path.join(self.tmp.name, "events.jsonl"),
+                                                     "event_files": [os.path.join(self.tmp.name, "events.jsonl")],
+                                                     "claude_app_links": False})
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        self.tmp.cleanup()
+
+    def call(self, method, path, body=None, header="1"):
+        import asyncio
+        sent = []
+        raw = b"" if body is None else json.dumps(body).encode()
+
+        async def receive():
+            return {"type": "http.request", "body": raw, "more_body": False}
+
+        async def send(msg):
+            sent.append(msg)
+
+        headers = [(b"host", b"127.0.0.1:7070"), (b"content-type", b"application/json")]
+        if header is not None:
+            headers.append((b"x-acc-pause", header.encode()))
+        scope = {"type": "http", "asgi": {"version": "3.0"}, "http_version": "1.1", "method": method,
+                 "scheme": "http", "path": path, "raw_path": path.encode(), "query_string": b"",
+                 "root_path": "", "headers": headers, "client": ("127.0.0.1", 5000), "server": ("127.0.0.1", 7070)}
+        asyncio.run(server.app(scope, receive, send))
+        status = next(m["status"] for m in sent if m["type"] == "http.response.start")
+        payload = b"".join(m.get("body", b"") for m in sent if m["type"] == "http.response.body")
+        return status, json.loads(payload or b"null")
+
+    def test_resume_ends_the_pause_and_remembers_it(self):
+        import time
+        self.call("POST", "/api/pause", {"minutes": 15})
+        pause_at = self.call("GET", "/api/pause")[1]["at"]
+        status, body = self.call("POST", "/api/resume")
+        self.assertEqual(status, 200)
+        self.assertIsNone(body["at"], "the pause is over")
+        self.assertEqual(body["resume"]["pause_at"], pause_at)
+        self.assertAlmostEqual(body["resume"]["since"], pause_at - 15 * 60, delta=2)
+        self.assertAlmostEqual(body["resume"]["at"], time.time(), delta=5)
+        self.assertFalse(server.pause_path().exists())
+        self.assertEqual(self.call("GET", "/api/pause")[1]["resume"]["pause_at"], pause_at)
+        self.assertEqual(self.call("POST", "/api/resume", header=None)[0], 400)
+
+    def test_resume_without_a_pause_looks_back_a_day(self):
+        import time
+        status, body = self.call("POST", "/api/resume")
+        self.assertEqual(status, 200)
+        self.assertAlmostEqual(body["resume"]["since"], time.time() - 24 * 3600, delta=5)
+        self.assertNotIn("pause_at", body["resume"])
+
+    def test_bridge_reports_the_count(self):
+        self.assertEqual(self.call("POST", "/api/resume/done", {"woken": 3})[0], 409, "nothing to report on")
+        self.call("POST", "/api/resume")
+        for bad in ({"woken": -1}, {"woken": "3"}, {"woken": True}, {}):
+            self.assertEqual(self.call("POST", "/api/resume/done", bad)[0], 400, bad)
+        status, body = self.call("POST", "/api/resume/done", {"woken": 3})
+        self.assertEqual((status, body["resume"]["woken"]), (200, 3))
+        self.assertIn("done_at", body["resume"])
+        self.assertEqual(self.call("POST", "/api/resume/done", {"woken": 1}, header=None)[0], 400)
+
+    def test_old_or_malformed_resume_is_forgotten(self):
+        import time
+        server.resume_path().parent.mkdir(parents=True, exist_ok=True)
+        server.resume_path().write_text(json.dumps({"at": time.time() - 3 * 3600}))
+        self.assertNotIn("resume", self.call("GET", "/api/pause")[1])
+        for body in ('{"at": "x"}', "[]", "nope", '{"at": true}'):
+            server.resume_path().write_text(body)
+            self.assertIsNone(server.read_resume(), body)
+
+    # ── which sessions the bridge should start ──
+    def ev(self, minutes_ago, action, status, session, **extra):
+        from datetime import datetime, timezone, timedelta
+        ts = (datetime(2026, 11, 4, 12, 0, tzinfo=timezone.utc) - timedelta(minutes=minutes_ago)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+        e = {"ts": ts, "session": session, "source": "claude-code", "agent": "Demo", "action": action, "status": status}
+        e.update(extra)
+        return e
+
+    def test_paused_sessions_are_the_told_ones_whose_turn_ended(self):
+        from datetime import datetime, timezone
+        since = datetime(2026, 11, 4, 11, 30, tzinfo=timezone.utc).timestamp()
+        told = lambda m, s: self.ev(m, "Time limit set", "info", s, pause=True, time_limit=600)  # noqa: E731
+        events = [
+            # stopped after being told: in
+            self.ev(40, "Working", "started", "aaaaaaaa", title="Alpha"), told(25, "aaaaaaaa"), self.ev(20, "Your turn", "finished", "aaaaaaaa"),
+            # told, still working: out
+            self.ev(40, "Working", "started", "bbbbbbbb"), told(25, "bbbbbbbb"), self.ev(1, "Working", "started", "bbbbbbbb"),
+            # stopped, then the user messaged it again: out
+            told(25, "cccccccc"), self.ev(20, "Your turn", "finished", "cccccccc"), self.ev(5, "Working", "started", "cccccccc"),
+            # stopped, then cleared (cancelled or already resumed): out
+            told(25, "dddddddd"), self.ev(20, "Your turn", "finished", "dddddddd"), self.ev(10, "Time limit cleared", "info", "dddddddd"),
+            # never told, just finished a turn: out
+            self.ev(40, "Working", "started", "eeeeeeee"), self.ev(20, "Your turn", "finished", "eeeeeeee"),
+            # told for an older pause, before `since`: out
+            told(50, "ffffffff"), self.ev(45, "Your turn", "finished", "ffffffff"),
+            # told, stopped, then closed: out
+            told(25, "gggggggg"), self.ev(20, "Your turn", "finished", "gggggggg"), self.ev(15, "Session closed", "idle", "gggggggg"),
+            # a plain time limit the user typed, not the dashboard's: out
+            self.ev(25, "Time limit set", "info", "hhhhhhhh", time_limit=600), self.ev(20, "Your turn", "finished", "hhhhhhhh"),
+            # told twice (rescheduled), stopped after the second: in, latest stop
+            told(28, "iiiiiiii"), self.ev(27, "Your turn", "finished", "iiiiiiii"), told(24, "iiiiiiii"), self.ev(3, "Your turn", "finished", "iiiiiiii"),
+            # not a Claude Code session: out
+            {"ts": "2026-11-04T11:40:00.000Z", "session": "jjjjjjjj", "source": "other", "action": "Time limit set", "status": "info", "pause": True},
+            {"ts": "2026-11-04T11:41:00.000Z", "session": "jjjjjjjj", "source": "other", "action": "Your turn", "status": "finished"},
+        ]
+        links = {"aaaaaaaa": {"app": "local_aaaaaaaa-1111", "web": None}}
+        rows = server.paused_sessions(events, links, since)
+        self.assertEqual([r["session"] for r in rows], ["aaaaaaaa", "iiiiiiii"])
+        self.assertEqual(rows[0]["app"], "local_aaaaaaaa-1111")
+        self.assertEqual((rows[0]["title"], rows[0]["project"]), ("Alpha", "Demo"))
+        self.assertIsNone(rows[1]["app"])
+        self.assertLess(rows[0]["stopped_at"], rows[1]["stopped_at"])
+
+    def test_paused_endpoint_uses_the_resume_window(self):
+        from datetime import datetime, timezone
+        events = [self.ev(25, "Time limit set", "info", "aaaaaaaa", pause=True, time_limit=600),
+                  self.ev(20, "Your turn", "finished", "aaaaaaaa")]
+        _write(server.CONFIG["event_file"], events)
+        # No pause and no resume on file: the day-long window still finds it (fixed dates above are in the past,
+        # so pin "now" through the resume record instead).
+        server.resume_path().parent.mkdir(parents=True, exist_ok=True)
+        import time
+        now = time.time()
+        server.resume_path().write_text(json.dumps({"at": now, "since": datetime(2026, 11, 4, 11, 30, tzinfo=timezone.utc).timestamp()}))
+        status, body = self.call("GET", "/api/paused")
+        self.assertEqual(status, 200)
+        self.assertEqual([r["session"] for r in body["sessions"]], ["aaaaaaaa"])
+        server.resume_path().write_text(json.dumps({"at": now, "since": datetime(2026, 11, 4, 11, 50, tzinfo=timezone.utc).timestamp()}))
+        self.assertEqual(self.call("GET", "/api/paused")[1]["sessions"], [], "told before this pause")

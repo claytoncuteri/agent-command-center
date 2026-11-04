@@ -49,7 +49,8 @@ always exits 0, so it can never block or steer a session. One opt-in
 exception, off by default: with ACC_PAUSE_NOTICE=1, when the dashboard's
 "Go offline in N minutes" button has set a pause, the script prints one fixed
 sentence telling the session to save its work and end its turn by that time
-(once when set, once when the time arrives, once if cancelled). The sentence
+(once when set, once when the time arrives, once if cancelled, and once
+when "Resume all" says the user is back). The sentence
 carries a clock time and nothing else, so no text from a file, the dashboard
 or another session can reach the model through it. See pause_notice().
 
@@ -88,6 +89,8 @@ Configuration (environment)
                      usual async one)
     ACC_PAUSE_FILE   where the dashboard writes the scheduled pause
                      (default <event file dir>/pause.json)
+    ACC_RESUME_FILE  where the dashboard writes "Resume all"
+                     (default <event file dir>/resume.json)
 
 Event mapping
 -------------
@@ -952,6 +955,26 @@ def scheduled_pause(now: float) -> Optional[float]:
     return float(at)
 
 
+def resume_file() -> str:
+    path = os.environ.get("ACC_RESUME_FILE") or os.path.join(os.path.dirname(pause_file()), "resume.json")
+    return os.path.expanduser(path)
+
+
+def resume_requested(now: float) -> Optional[float]:
+    """Epoch seconds of the dashboard's "Resume all", or None (none, malformed, or hours old)."""
+    try:
+        with open(resume_file(), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    at = data.get("at") if isinstance(data, dict) else None
+    if isinstance(at, bool) or not isinstance(at, (int, float)):
+        return None
+    if now > at + _PAUSE_GRACE_SECONDS:
+        return None
+    return float(at)
+
+
 def _clock(at: float) -> str:
     return datetime.fromtimestamp(at).strftime("%H:%M")
 
@@ -973,6 +996,11 @@ def pause_notice_text(stage: str, at: float, now: float) -> str:
             "Notice from the dashboard: it is {} and the user is going offline now. Save your work "
             "and end your turn at once with a one-line recap.".format(when)
         )
+    if stage == "resumed":
+        return (
+            "Notice from the dashboard: the user is back. Carry on from where you paused for the "
+            "{} pause: pick up the step you stopped at and continue the task as before.".format(when)
+        )
     return "Notice from the dashboard: the pause planned for {} is cancelled. Carry on as before.".format(when)
 
 
@@ -991,10 +1019,14 @@ def pause_notice(state: Dict[str, Any], now: Optional[float] = None) -> Optional
         if told is None:
             return None
         state.pop("pause_told", None)
-        if told.get("stage") != "coming":
-            return None  # told to stop already, or the pause just aged out
         old_at = told.get("at")
         old_at = float(old_at) if isinstance(old_at, (int, float)) else now
+        resumed = resume_requested(now)
+        if resumed is not None and resumed >= old_at - _PAUSE_GRACE_SECONDS:
+            # "Resume all" pressed: whatever stage it had reached, the session carries on.
+            return {"stage": "resumed", "at": old_at, "text": pause_notice_text("resumed", old_at, now)}
+        if told.get("stage") != "coming":
+            return None  # told to stop already, or the pause just aged out
         return {"stage": "cancelled", "at": old_at, "text": pause_notice_text("cancelled", old_at, now)}
     stage = "now" if now >= at else "coming"
     if told and told.get("at") == at and told.get("stage") in (stage, "now"):
@@ -1021,9 +1053,9 @@ def _say_pause_notice(data: Dict[str, Any], session_id: str) -> None:
     if notice["stage"] == "coming":
         append_event(make_event(agent=agent, session_id=session_id, action="Time limit set", status="info",
                                 where=where, time_limit=max(1, int(notice["at"] - now)), pause=True))
-    elif notice["stage"] == "cancelled":
+    elif notice["stage"] in ("cancelled", "resumed"):
         append_event(make_event(agent=agent, session_id=session_id, action="Time limit cleared", status="info",
-                                where=where))
+                                where=where, result=notice["stage"]))
     out = {"hookSpecificOutput": {"hookEventName": event, "additionalContext": notice["text"]}}
     sys.stdout.write(json.dumps(out) + "\n")
     sys.stdout.flush()
