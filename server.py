@@ -389,6 +389,16 @@ def read_pause(now: Optional[float] = None) -> dict:
     return out
 
 
+def pause_status(now: Optional[float] = None) -> dict:
+    """What /api/pause returns: the scheduled pause, plus a fresh resume request when there is one."""
+    now = time.time() if now is None else now
+    out = read_pause(now)
+    resume = read_resume(now)
+    if resume is not None:
+        out["resume"] = resume
+    return out
+
+
 def write_pause(minutes: int, now: Optional[float] = None) -> dict:
     now = time.time() if now is None else now
     path = pause_path()
@@ -410,7 +420,7 @@ def clear_pause() -> dict:
 
 @app.get("/api/pause")
 def api_pause_get() -> JSONResponse:
-    return JSONResponse(content=read_pause())
+    return JSONResponse(content=pause_status())
 
 
 @app.post("/api/pause")
@@ -434,6 +444,185 @@ async def api_pause_set(request: Request) -> JSONResponse:
     if minutes < 1 or minutes > _PAUSE_MAX_MINUTES:
         raise HTTPException(status_code=400, detail="minutes must be between 1 and %d." % _PAUSE_MAX_MINUTES)
     return JSONResponse(content=write_pause(minutes))
+
+
+# ── Resume all ──────────────────────────────────────────────────────────────────
+#
+# Back at the keyboard, "Resume all" ends the pause and asks for every session
+# that stopped for it to be started again. The dashboard cannot start a turn in
+# a Claude Code session by itself; a Claude Code session can (the desktop app
+# lets one session message another, which starts the target's turn). So the
+# button writes resume.json beside the event file and removes pause.json; a
+# standing "bridge" session waits on that file, reads /api/paused for the
+# sessions that stopped, messages each one, and reports back through
+# /api/resume/done. The hook, meanwhile, tells any session it had warned that
+# the user is back. See examples/watchtower-bridge/SKILL.md.
+
+_RESUME_SHOWN_SECONDS = 2 * 3600
+
+
+def resume_path() -> pathlib.Path:
+    return pathlib.Path(CONFIG["event_file"]).expanduser().parent / "resume.json"
+
+
+def _number(value) -> Optional[float]:
+    return None if isinstance(value, bool) or not isinstance(value, (int, float)) else float(value)
+
+
+def read_resume(now: Optional[float] = None) -> Optional[dict]:
+    """The latest resume request, or None when there is none or it is hours old."""
+    now = time.time() if now is None else now
+    try:
+        data = json.loads(resume_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    at = _number(data.get("at")) if isinstance(data, dict) else None
+    if at is None or now > at + _RESUME_SHOWN_SECONDS:
+        return None
+    out: dict = {"at": at}
+    for key in ("pause_at", "since", "done_at"):
+        value = _number(data.get(key))
+        if value is not None:
+            out[key] = value
+    woken = data.get("woken")
+    if isinstance(woken, int) and not isinstance(woken, bool) and woken >= 0:
+        out["woken"] = woken
+    return out
+
+
+def _write_resume_file(record: dict) -> None:
+    path = resume_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(record), encoding="utf-8")
+    tmp.replace(path)
+
+
+def write_resume(now: Optional[float] = None) -> dict:
+    """Record the resume request, remembering which pause it ends, and end that pause."""
+    now = time.time() if now is None else now
+    pause = read_pause(now)
+    record: dict = {"at": now}
+    if pause.get("at") is not None:
+        record["pause_at"] = pause["at"]
+        record["since"] = pause.get("set_at", pause["at"])
+    else:
+        record["since"] = now - 24 * 3600
+    _write_resume_file(record)
+    clear_pause()
+    return read_resume(now) or record
+
+
+def mark_resume_done(woken: int, now: Optional[float] = None) -> Optional[dict]:
+    now = time.time() if now is None else now
+    current = read_resume(now)
+    if current is None:
+        return None
+    current.update({"done_at": now, "woken": woken})
+    _write_resume_file(current)
+    return read_resume(now)
+
+
+def _event_time(e: dict) -> Optional[float]:
+    ts = e.get("ts")
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def paused_sessions(events: list, links: dict, since: float) -> list:
+    """
+    Sessions that were told to stop for the pause set at `since` and whose turn
+    then ended: told (a "Time limit set" mark with pause true, at or after
+    `since`), and nothing since but the turn ending ("Your turn"). A session
+    that was cleared, closed, reopened or messaged since is left out. Each row:
+    the 8-character session id, the desktop app's id and link when known, the
+    project folder, the title, and when it stopped.
+    """
+    rows: dict = {}
+    for e in sorted((e for e in events if isinstance(e, dict)), key=lambda e: e.get("ts") or ""):
+        sid = e.get("session")
+        if not isinstance(sid, str) or not sid or e.get("source") != "claude-code":
+            continue
+        t = _event_time(e)
+        if t is None:
+            continue
+        row = rows.setdefault(sid, {"session": sid, "told": None, "stopped": None, "agent": None, "title": None})
+        if e.get("agent"):
+            row["agent"] = e["agent"]
+        if e.get("title"):
+            row["title"] = e["title"]
+        action, status = e.get("action"), e.get("status")
+        if action == "Time limit set" and e.get("pause") is True and t >= since:
+            row["told"], row["stopped"] = t, None
+        elif row["told"] is None:
+            continue
+        elif status == "finished":
+            row["stopped"] = t
+        elif action == "Time limit cleared" or action in ("Session closed", "Session opened", "Session resumed") \
+                or status == "started":
+            row["told"], row["stopped"] = None, None
+    out = []
+    for sid, row in rows.items():
+        if row["told"] is None or row["stopped"] is None:
+            continue
+        link = links.get(sid) if isinstance(links, dict) else None
+        out.append({
+            "session": sid,
+            "app": link.get("app") if isinstance(link, dict) else None,
+            "web": link.get("web") if isinstance(link, dict) else None,
+            "project": row["agent"],
+            "title": row["title"],
+            "stopped_at": row["stopped"],
+        })
+    out.sort(key=lambda r: r["stopped_at"])
+    return out
+
+
+@app.get("/api/paused")
+def api_paused() -> JSONResponse:
+    """The sessions that stopped for the current (or just-ended) pause, for the bridge."""
+    now = time.time()
+    resume = read_resume(now)
+    pause = read_pause(now)
+    if resume is not None and resume.get("since") is not None:
+        since = resume["since"]
+    elif pause.get("at") is not None:
+        since = pause.get("set_at", pause["at"])
+    else:
+        since = now - 24 * 3600
+    links = claude_app_links() if CONFIG.get("claude_app_links") else {}
+    rows = paused_sessions(parse_all_events(CONFIG["event_files"]), links, since)
+    return JSONResponse(content={"since": since, "sessions": rows})
+
+
+@app.post("/api/resume")
+async def api_resume(request: Request) -> JSONResponse:
+    """End the pause and ask the bridge to start every session that stopped for it."""
+    if request.headers.get(_PAUSE_HEADER) != "1":
+        raise HTTPException(status_code=400, detail="Missing X-ACC-Pause header.")
+    write_resume()
+    return JSONResponse(content=pause_status())
+
+
+@app.post("/api/resume/done")
+async def api_resume_done(request: Request) -> JSONResponse:
+    """The bridge reports how many sessions it started."""
+    if request.headers.get(_PAUSE_HEADER) != "1":
+        raise HTTPException(status_code=400, detail="Missing X-ACC-Pause header.")
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Request body must be JSON.")
+    woken = body.get("woken") if isinstance(body, dict) else None
+    if isinstance(woken, bool) or not isinstance(woken, int) or woken < 0:
+        raise HTTPException(status_code=400, detail="woken (whole number, 0 or more) is required.")
+    if mark_resume_done(woken) is None:
+        raise HTTPException(status_code=409, detail="No resume request is open.")
+    return JSONResponse(content=pause_status())
 
 
 # ── Claude desktop app links ────────────────────────────────────────────────────

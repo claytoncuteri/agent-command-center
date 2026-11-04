@@ -420,6 +420,11 @@ class TestSessionModel(unittest.TestCase):
                       ev(2, "info", "Time limit cleared"), ev(1, "started", "Working", doing="Editing files")])
         self.assertEqual((s["state"], s["line"]), ("work", "Editing files \u00b7 turn running 6m"))
         self.assertEqual(s["timeline"][1], "The pause was cancelled; carrying on")  # newest first
+        back = self.one([ev(6, "started", "Working", doing="Thinking"), ev(5, "info", "Time limit set", time_limit=600, pause=True),
+                         ev(4, "finished", "Your turn"), ev(2, "info", "Time limit cleared", result="resumed"),
+                         ev(1, "started", "Working", doing="Thinking")])
+        self.assertEqual(back["state"], "work")
+        self.assertEqual(back["timeline"][1], "You came back; carrying on from where it paused")
         done = self.one([ev(14, "started", "Working", doing="Thinking"), ev(13, "info", "Time limit set", time_limit=600, pause=True),
                          ev(4, "info", "Time limit cleared"), ev(3, "finished", "Your turn")])
         self.assertEqual(done["state"], "turn", "no limit left to be paused at")

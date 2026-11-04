@@ -340,6 +340,23 @@ and reads one small file. A pause more than two hours past is forgotten, and
 the hook marks the sessions it has told in their state files, so each hears
 each stage once.
 
+**Resume all.** Back at the keyboard, press **I'm back: resume all** on the
+same control. It ends the pause (`POST /api/resume` writes `resume.json` and
+removes `pause.json`) and the hook tells every session it had warned that you
+are back. Sessions that *stopped* for the pause need a turn started, and the
+dashboard cannot do that: only a Claude Code session can, by messaging
+another session through the desktop app. So keep one small **bridge session**
+standing by: install `examples/watchtower-bridge/SKILL.md` as a skill (copy
+the folder to `~/.claude/skills/watchtower-bridge/`), open a desktop-app
+session for it, and say "arm the bridge". It waits on `resume.json` at no
+token cost (a background command that exits when the file appears), then
+reads `GET /api/paused` (the sessions told to stop whose turn then ended,
+with their app ids), sends each a fixed "the user is back, carry on" message,
+and reports the count through `POST /api/resume/done`, which the control
+shows ("6 sessions resumed at 9:14"). The button press is the consent: every
+resumed session starts a turn. Without a bridge the button still ends the
+pause; the stopped sessions then wait for your own message, as before.
+
 ### Project names
 
 Each session is labelled with its folder name, which is often a worktree or a
