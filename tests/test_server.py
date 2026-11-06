@@ -656,7 +656,7 @@ class TestPause(unittest.TestCase):
         return status, json.loads(payload or b"null")
 
     def test_nothing_scheduled(self):
-        self.assertEqual(self.call("GET"), (200, {"at": None}))
+        self.assertEqual(self.call("GET"), (200, {"at": None, "bridge": {"alive": False}}))
         self.assertFalse(server.pause_path().exists())
 
     def test_schedule_then_read_then_cancel(self):
@@ -840,3 +840,98 @@ class TestClosingMessageInSummary(unittest.TestCase):
         self.assertIsNone(server._clean_summary({"reply": 7})["reply"])
         self.assertIsNone(server._clean_summary({"reply": "  "})["reply"])
         self.assertIsNone(server._clean_summary({})["reply"])
+
+
+class TestUsageLimitResume(unittest.TestCase):
+    """Sessions stopped by a usage limit: listed for Resume all once it resets, shown on the control until then."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        ev_file = os.path.join(self.tmp.name, "events.jsonl")
+        self.patch = mock.patch.dict(server.CONFIG, {"event_file": ev_file, "event_files": [ev_file],
+                                                     "claude_app_links": False})
+        self.patch.start()
+        server._limit_cache.update({"key": None, "count": 0})
+        import time
+        self.now = time.time()
+
+    def tearDown(self):
+        self.patch.stop()
+        server._limit_cache.update({"key": None, "count": 0})
+        self.tmp.cleanup()
+
+    def ev(self, seconds_ago, action, status, session, **extra):
+        from datetime import datetime, timezone
+        ts = datetime.fromtimestamp(self.now - seconds_ago, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+        e = {"ts": ts, "session": session, "source": "claude-code", "agent": "Demo", "action": action, "status": status}
+        e.update(extra)
+        return e
+
+    def stop(self, seconds_ago, session, resets_in, kind="weekly"):
+        extra = {"limit": kind}
+        if resets_in is not None:
+            extra["limit_resets"] = int(self.now + resets_in)
+        return self.ev(seconds_ago, "Usage limit reached", "finished", session, **extra)
+
+    def test_listed_once_the_limit_has_reset(self):
+        events = [
+            self.ev(4000, "Working", "started", "aaaaaaaa", title="Alpha"), self.stop(3600, "aaaaaaaa", -60),
+            self.ev(4000, "Working", "started", "bbbbbbbb"), self.stop(3600, "bbbbbbbb", 3600),           # not reset yet
+            self.stop(3600, "cccccccc", -60), self.ev(600, "Working", "started", "cccccccc"),            # carried on already
+            self.stop(3600, "dddddddd", -60), self.ev(600, "Session closed", "idle", "dddddddd"),        # closed
+            self.stop(9 * 24 * 3600, "eeeeeeee", -8 * 24 * 3600),                                        # too old
+            self.stop(3600, "ffffffff", None, kind="model"),                                             # no reset known
+        ]
+        rows = server.paused_sessions(events, {"aaaaaaaa": {"app": "local_aaaaaaaa-1111"}}, self.now, now=self.now)
+        self.assertEqual([(r["session"], r["reason"]) for r in rows], [("aaaaaaaa", "limit")])
+        self.assertEqual((rows[0]["app"], rows[0]["limit"], rows[0]["title"]), ("local_aaaaaaaa-1111", "weekly", "Alpha"))
+        counted = server.paused_sessions(events, {}, self.now, now=self.now, ready_only=False)
+        self.assertEqual(sorted(r["session"] for r in counted), ["aaaaaaaa", "bbbbbbbb", "ffffffff"])
+
+    def test_a_told_session_that_hit_the_limit_resumes_once(self):
+        events = [self.ev(1000, "Time limit set", "info", "aaaaaaaa", pause=True, time_limit=900),
+                  self.stop(900, "aaaaaaaa", -60)]
+        rows = server.paused_sessions(events, {}, self.now - 2000, now=self.now)
+        self.assertEqual([(r["session"], r["reason"]) for r in rows], [("aaaaaaaa", "pause")])
+
+    def write_limit(self, seconds_ago, resets_in, kind="weekly"):
+        server.usage_limit_path().parent.mkdir(parents=True, exist_ok=True)
+        body = {"at": self.now - seconds_ago, "kind": kind}
+        if resets_in is not None:
+            body["resets_at"] = self.now + resets_in
+        server.usage_limit_path().write_text(json.dumps(body))
+
+    def test_control_shows_the_limit_while_sessions_wait(self):
+        _write(server.CONFIG["event_file"], [self.stop(3600, "aaaaaaaa", 600), self.stop(3500, "bbbbbbbb", 600)])
+        self.write_limit(3500, 600)
+        status = server.pause_status(self.now)
+        self.assertEqual((status["limit"]["kind"], status["limit"]["stopped"]), ("weekly", 2))
+        self.assertAlmostEqual(status["limit"]["resets_at"], self.now + 600, delta=1)
+        # Resume all pressed after the limit: the control shows the resume instead.
+        server.resume_path().write_text(json.dumps({"at": self.now - 10, "since": self.now - 86400}))
+        self.assertNotIn("limit", server.pause_status(self.now))
+        server.resume_path().unlink()
+        # Nobody waits any more (both carried on): nothing to show.
+        server._limit_cache.update({"key": None})
+        _write(server.CONFIG["event_file"], [self.stop(3600, "aaaaaaaa", 600), self.ev(60, "Working", "started", "aaaaaaaa")])
+        self.assertNotIn("limit", server.pause_status(self.now))
+
+    def test_limit_file_old_or_malformed(self):
+        self.write_limit(9 * 24 * 3600, -8 * 24 * 3600)
+        self.assertIsNone(server.read_usage_limit(self.now))
+        for body in ("nope", "[]", '{"at": "x"}', '{"at": true}'):
+            server.usage_limit_path().write_text(body)
+            self.assertIsNone(server.read_usage_limit(self.now), body)
+        server.usage_limit_path().write_text(json.dumps({"at": self.now, "kind": "strange", "resets_at": "x"}))
+        self.assertEqual(server.read_usage_limit(self.now), {"at": self.now, "kind": "model"})
+
+    def test_bridge_heartbeat(self):
+        self.assertEqual(server.bridge_status(self.now), {"alive": False})
+        alive = pathlib.Path(server.CONFIG["event_file"]).parent / "bridge.alive"
+        alive.parent.mkdir(parents=True, exist_ok=True)
+        alive.touch()
+        os.utime(alive, (self.now - 5, self.now - 5))
+        self.assertTrue(server.bridge_status(self.now)["alive"])
+        os.utime(alive, (self.now - 120, self.now - 120))
+        self.assertFalse(server.bridge_status(self.now)["alive"])
+        self.assertIn("bridge", server.pause_status(self.now))

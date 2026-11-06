@@ -398,6 +398,30 @@ class TestSessionModel(unittest.TestCase):
         s = self.one([ev(2, "info", "Pause requested", pause=True)])
         self.assertIn(s["state"], ("turn", "idle", "paused"))
 
+    def test_usage_limit_stop_waits_for_the_reset(self):
+        now_s = 1792843200
+        stopped = self.one([ev(30, "started", "Working", doing="Editing files"),
+                            ev(20, "finished", "Usage limit reached", limit="weekly", limit_resets=now_s + 3600)])
+        self.assertEqual(stopped["state"], "paused")
+        self.assertTrue(stopped["line"].startswith("Stopped at your weekly limit \u00b7 resets "), stopped["line"])
+        self.assertEqual(stopped["timeline"][0], "Hit the weekly limit")
+        old = self.one([ev(26 * 60, "started", "Working", doing="Editing files"),
+                        ev(25 * 60, "finished", "Usage limit reached", limit="session", limit_resets=now_s - 2 * 3600)])
+        self.assertEqual(old["state"], "paused", "still waiting, however long ago")
+        self.assertTrue(old["line"].startswith("Your session limit reset 2h ago \u00b7 Resume all"), old["line"])
+        model = self.one([ev(20, "finished", "Usage limit reached", limit="model")])
+        self.assertTrue(model["line"].startswith("Stopped at the limit for this model"), model["line"])
+        back = self.one([ev(20, "finished", "Usage limit reached", limit="weekly", limit_resets=now_s - 60),
+                         ev(5, "started", "Working", doing="Thinking")])
+        self.assertEqual(back["state"], "work", "a new turn ends the wait")
+
+    def test_api_error_stop_is_not_working_forever(self):
+        s = self.one([ev(30, "started", "Working", doing="Running a command"),
+                      ev(20, "failed", "Stopped by an error", detail="error: server_error")])
+        self.assertEqual(s["state"], "error")
+        self.assertTrue(s["line"].startswith("Stopped by an API error (server error)") or "server error" in s["line"], s["line"])
+        self.assertEqual(s["timeline"][0], "Stopped by an API error (server error)")
+
     def test_go_offline_notice_counts_down_then_saved_or_paused(self):
         told = ev(3, "info", "Time limit set", time_limit=600, pause=True)
         s = self.one([ev(4, "started", "Working", doing="Thinking"), told, ev(1, "started", "Working", doing="Editing files")])

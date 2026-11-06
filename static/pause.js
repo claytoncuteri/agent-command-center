@@ -16,7 +16,11 @@
     '.pz .pill.over { border-color: rgba(255,128,128,.5); background: var(--red-soft, rgba(255,128,128,.12)); }',
     '.pz .pill b { font-variant-numeric: tabular-nums; }',
     '.pz .note { color: var(--sub, #9fb0d8); }',
-    '.pz .err { color: var(--red, #ff8c8c); }'
+    '.pz .err { color: var(--red, #ff8c8c); }',
+    '.pz .bridge { font-size: 12px; color: var(--sub, #9fb0d8); }',
+    '.pz .bridge.ok::before { content: "\\25CF  "; color: var(--green, #63f0b6); }',
+    '.pz .bridge.down { color: var(--red, #ff8c8c); }',
+    '.pz button[disabled] { opacity: .45; cursor: default; }'
   ].join('\n');
 
   function dur(ms) {
@@ -53,6 +57,9 @@
         h += '<span class="note">' + (over ? 'Sessions that stopped wait for you.' : 'Sessions are told to save their work and stop.') + '</span>';
         h += '<button class="go" data-act="resume">I\u2019m back: resume all</button>';
         if (!over) h += '<button data-act="cancel">Cancel</button>';
+        h += bridgeHtml();
+      } else if (pause.limit && pause.limit.stopped > 0) {
+        h = limitHtml(pause.limit);
       } else if (resumeNote()) {
         h = resumeNote() + '<button data-act="open">Go offline in\u2026</button>';
       } else if (editing) {
@@ -77,6 +84,38 @@
         ? 'Offline at ' + esc(clock(pause.at)) + ' · <b>' + dur(left) + '</b> left'
         : 'Offline time was ' + esc(clock(pause.at)) + ' · <b>' + dur(-left) + '</b> ago';
     }
+    var LIMIT_WORD = { session: 'Session limit', weekly: 'Weekly limit', model: 'Model limit' };
+
+    function resetClock(sec) {
+      var d = new Date(sec * 1000), opts = { hour: 'numeric', minute: '2-digit' };
+      if (Math.abs(sec * 1000 - Date.now()) > 20 * 3600 * 1000) opts.weekday = 'short';
+      return d.toLocaleString([], opts);
+    }
+
+    // Sessions stopped by a usage limit: when it resets, and one button after.
+    function limitHtml(l) {
+      var n = l.stopped, what = LIMIT_WORD[l.kind] || LIMIT_WORD.model;
+      var count = n === 1 ? '1 session stopped' : n + ' sessions stopped';
+      if (typeof l.resets_at !== 'number') {
+        return '<span class="pill over">' + what + ' \u00b7 ' + count + '</span>' +
+          '<span class="note">No reset time known: switch model in those sessions, or wait.</span>';
+      }
+      if (l.resets_at * 1000 > Date.now()) {
+        return '<span class="pill over">' + what + ' \u00b7 resets ' + esc(resetClock(l.resets_at)) + ' \u00b7 ' + count + '</span>' +
+          '<button class="go" disabled title="Opens when the limit resets">Resume all at the reset</button>' + bridgeHtml();
+      }
+      return '<span class="pill">' + what + ' reset at ' + esc(resetClock(l.resets_at)) + ' \u00b7 ' + count + '</span>' +
+        '<button class="go" data-act="resume">Resume all ' + n + '</button>' + bridgeHtml();
+    }
+
+    // Whether the bridge session is standing by to act on Resume all.
+    function bridgeHtml() {
+      var b = pause.bridge;
+      if (!b) return '';
+      return b.alive ? '<span class="bridge ok">Bridge armed</span>'
+        : '<span class="bridge down">Bridge not running: open its session and say \u201carm the bridge\u201d</span>';
+    }
+
     // After "Resume all": what the bridge session did with it, for a while.
     function resumeNote() {
       var r = pause.resume;
@@ -89,7 +128,11 @@
         '<span class="note">The bridge session wakes the ones that stopped. If nothing happens, it is not running.</span>';
     }
 
+    var limitWasOpen = false;
     function tick() {
+      // The limit's reset passing turns the waiting banner into the button.
+      var l = pause.limit, open = !!(l && typeof l.resets_at === 'number' && l.resets_at * 1000 <= Date.now());
+      if (open !== limitWasOpen) { limitWasOpen = open; if (!busy) render(); }
       var pill = document.getElementById('pz-pill');
       if (!pill || typeof pause.at !== 'number') return;
       pill.innerHTML = pillText();
@@ -111,9 +154,10 @@
 
     function load() {
       return fetch('/api/pause').then(function (r) { return r.json(); }).then(function (p) {
-        var before = JSON.stringify([pause.at, pause.resume || null]);
+        var view = function (x) { return JSON.stringify([x.at, x.resume || null, x.limit || null, !!(x.bridge && x.bridge.alive)]); };
+        var before = view(pause);
         pause = p || { at: null };
-        if (before !== JSON.stringify([pause.at, pause.resume || null])) { render(); if (opts.onChange) opts.onChange(pause); }
+        if (before !== view(pause)) { render(); if (opts.onChange) opts.onChange(pause); }
       }).catch(function () {});
     }
 

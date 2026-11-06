@@ -12,7 +12,8 @@ prompt or question waiting on you shows up in the approvals panel.
 Privacy, by construction
 ------------------------
 The script reads only these stdin fields: hook_event_name, session_id, cwd,
-source, session_title, tool_name, is_interrupt, notification_type. It never
+source, session_title, tool_name, is_interrupt, notification_type, error
+(StopFailure's error type, one of a fixed list). It never
 reads the prompt, tool results, the assistant's message, the transcript, or
 the free text of a notification, and reads tool inputs in one case only: for
 a task-list update (TodoWrite, the app's update_plan) it reads each step's
@@ -115,6 +116,10 @@ Event mapping
     PostToolUseFailure      approved, or declined "interrupted" when is_interrupt
     PermissionDenied        declined          when it matches
     Stop                    finished          "Your turn"
+    StopFailure             finished          "Usage limit reached" (error rate_limit), with
+                                              `limit` (session, weekly, model) and
+                                              `limit_resets` (epoch seconds) when known;
+                            failed            "Stopped by an error" for any other API error
     SessionEnd              idle              "Session closed"
 
 Resolve events carry their own action ("Permission granted", "Permission
@@ -302,6 +307,8 @@ def make_event(
     steps_current: Optional[int] = None,
     pause: Optional[bool] = None,
     time_limit: Optional[int] = None,
+    limit: Optional[str] = None,
+    limit_resets: Optional[int] = None,
 ) -> Dict[str, Any]:
     ev: Dict[str, Any] = {
         "schema": SCHEMA,
@@ -336,6 +343,10 @@ def make_event(
         ev["pause"] = True
     if time_limit:
         ev["time_limit"] = int(time_limit)
+    if limit:
+        ev["limit"] = limit[:DETAIL_MAX]
+    if limit_resets:
+        ev["limit_resets"] = int(limit_resets)
     return ev
 
 
@@ -791,6 +802,75 @@ def latest_human_message(path: Any) -> Optional[str]:
     except OSError:
         return None
     return None
+
+
+# ── Usage limits ────────────────────────────────────────────────────────────────
+#
+# A turn that ends on an API error fires StopFailure instead of Stop. For a
+# usage limit (error "rate_limit") the history file's newest error record
+# carries the quota Claude Code was refused on: which window and when it
+# resets. Only those two values are read (a fixed word and a number), from the
+# structured `quotaLimits` field, never the message text. The latest limit is
+# also written to usage-limit.json beside the event file, so the dashboard can
+# show it and offer Resume all once it has reset.
+
+_LIMIT_KINDS = {"five_hour": "session", "seven_day": "weekly"}
+_STOP_ERRORS = {"rate_limit", "overloaded", "authentication_failed", "oauth_org_not_allowed",
+                "account_on_hold", "billing_error", "invalid_request", "model_not_found",
+                "server_error", "max_output_tokens", "cloud_credential_error", "unknown"}
+_LIMIT_TAIL_BYTES = 256 * 1024
+
+
+def usage_limit_file() -> str:
+    return os.path.join(os.path.dirname(event_file()), "usage-limit.json")
+
+
+def latest_limit(path: Any) -> Dict[str, Any]:
+    """{"kind": session|weekly|model, "resets": epoch seconds or absent} from the newest error record."""
+    real = _safe_history_path(path)
+    found: Dict[str, Any] = {"kind": "model"}
+    if real is None:
+        return found
+    try:
+        size = os.path.getsize(real)
+        with open(real, "rb") as f:
+            f.seek(max(0, size - _LIMIT_TAIL_BYTES))
+            if size > _LIMIT_TAIL_BYTES:
+                f.readline()
+            last = None
+            for line in f:
+                if b'"isApiErrorMessage"' in line and b'"rate_limit"' in line:
+                    last = line
+    except OSError:
+        return found
+    if last is None:
+        return found
+    try:
+        rec = json.loads(last)
+    except ValueError:
+        return found
+    q = rec.get("quotaLimits") if isinstance(rec, dict) else None
+    if isinstance(q, dict):
+        kind = q.get("rateLimitType")
+        found["kind"] = _LIMIT_KINDS.get(kind, "model") if isinstance(kind, str) else "model"
+        resets = q.get("resetsAt")
+        if isinstance(resets, (int, float)) and not isinstance(resets, bool) and 10**9 <= resets < 10**10:
+            found["resets"] = int(resets)
+    return found
+
+
+def save_usage_limit(kind: str, resets: Optional[int]) -> None:
+    import time
+    record: Dict[str, Any] = {"at": time.time(), "kind": kind}
+    if resets:
+        record["resets_at"] = resets
+    path = usage_limit_file()
+    _ensure_dir(os.path.dirname(path))
+    tmp = path + ".tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(record, f)
+    os.replace(tmp, path)
 
 
 # ── The closing message (opt-in) ────────────────────────────────────────────────
@@ -1353,6 +1433,21 @@ def _dispatch(data: Dict[str, Any], session_id: str) -> None:
             if reply != doc.get("reply"):
                 doc["reply"] = reply
                 save_summary(session_id, doc)
+
+    elif event == "StopFailure":
+        # The turn ended on an API error; Stop does not fire for these.
+        close_approval(agent, session_id, state, where=where, status="declined", result="not run")
+        error = data.get("error") if data.get("error") in _STOP_ERRORS else "unknown"
+        if error == "rate_limit":
+            lim = latest_limit(data.get("transcript_path"))
+            emit("Usage limit reached", "finished", limit=lim["kind"], limit_resets=lim.get("resets"))
+            try:
+                save_usage_limit(lim["kind"], lim.get("resets"))
+            except OSError:
+                pass
+        else:
+            emit("Stopped by an error", "failed", detail="error: {}".format(error))
+        set_doing(None)
 
     elif event == "SessionEnd":
         close_approval(agent, session_id, state, where=where, status="declined", result="not run")

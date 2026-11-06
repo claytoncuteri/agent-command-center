@@ -390,13 +390,82 @@ def read_pause(now: Optional[float] = None) -> dict:
 
 
 def pause_status(now: Optional[float] = None) -> dict:
-    """What /api/pause returns: the scheduled pause, plus a fresh resume request when there is one."""
+    """
+    What /api/pause returns: the scheduled pause; a fresh resume request when
+    there is one; the latest usage limit while sessions still wait on it; and
+    whether the bridge session is standing by.
+    """
     now = time.time() if now is None else now
     out = read_pause(now)
     resume = read_resume(now)
     if resume is not None:
         out["resume"] = resume
+    limit = read_usage_limit(now)
+    if limit is not None and (resume is None or resume["at"] < limit["at"]):
+        waiting = _limit_waiting(now)
+        if waiting:
+            limit["stopped"] = waiting
+            out["limit"] = limit
+    out["bridge"] = bridge_status(now)
     return out
+
+
+# ── Usage limits and the bridge's heartbeat ────────────────────────────────────
+#
+# The hook writes usage-limit.json when a turn ends on a usage limit
+# (StopFailure, error rate_limit): {"at", "kind": session|weekly|model,
+# "resets_at"}. The pause control shows it while sessions still wait on it,
+# and offers Resume all once it has reset. The bridge session's wait loop
+# touches bridge.alive every few seconds, so the page can say whether anyone
+# is standing by to act on the button.
+
+_LIMIT_KEEP_SECONDS = 8 * 24 * 3600
+_BRIDGE_FRESH_SECONDS = 30
+_LIMIT_KIND_NAMES = ("session", "weekly", "model")
+
+
+def usage_limit_path() -> pathlib.Path:
+    return pathlib.Path(CONFIG["event_file"]).expanduser().parent / "usage-limit.json"
+
+
+def read_usage_limit(now: Optional[float] = None) -> Optional[dict]:
+    now = time.time() if now is None else now
+    try:
+        data = json.loads(usage_limit_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    at = _number(data.get("at"))
+    if at is None or now > at + _LIMIT_KEEP_SECONDS:
+        return None
+    kind = data.get("kind") if data.get("kind") in _LIMIT_KIND_NAMES else "model"
+    out: dict = {"at": at, "kind": kind}
+    resets = _number(data.get("resets_at"))
+    if resets is not None:
+        out["resets_at"] = resets
+    return out
+
+
+_limit_cache: dict = {"key": None, "count": 0}
+
+
+def _limit_waiting(now: float) -> int:
+    """How many sessions still wait on a usage limit (reset or not); cached briefly, the page polls often."""
+    key = (_sizes(CONFIG["event_files"]), int(now // 15))
+    if _limit_cache["key"] != key:
+        rows = paused_sessions(parse_all_events(CONFIG["event_files"]), {}, now, now=now, ready_only=False)
+        _limit_cache.update({"key": key, "count": sum(1 for r in rows if r["reason"] == "limit")})
+    return _limit_cache["count"]
+
+
+def bridge_status(now: Optional[float] = None) -> dict:
+    now = time.time() if now is None else now
+    try:
+        seen = (pathlib.Path(CONFIG["event_file"]).expanduser().parent / "bridge.alive").stat().st_mtime
+    except OSError:
+        return {"alive": False}
+    return {"alive": now - seen <= _BRIDGE_FRESH_SECONDS, "seen": seen}
 
 
 def write_pause(minutes: int, now: Optional[float] = None) -> dict:
@@ -533,15 +602,26 @@ def _event_time(e: dict) -> Optional[float]:
         return None
 
 
-def paused_sessions(events: list, links: dict, since: float) -> list:
+def paused_sessions(events: list, links: dict, since: float, now: Optional[float] = None,
+                    ready_only: bool = True) -> list:
     """
-    Sessions that were told to stop for the pause set at `since` and whose turn
-    then ended: told (a "Time limit set" mark with pause true, at or after
-    `since`), and nothing since but the turn ending ("Your turn"). A session
-    that was cleared, closed, reopened or messaged since is left out. Each row:
-    the 8-character session id, the desktop app's id and link when known, the
-    project folder, the title, and when it stopped.
+    The sessions Resume all should start, each with a `reason`:
+
+    - "pause": told to stop for the pause set at `since` (a "Time limit set"
+      mark with pause true, at or after `since`) and whose turn then ended,
+      with nothing since.
+    - "limit": stopped by a usage limit ("Usage limit reached") in the last
+      eight days, whose limit has reset by `now` (or not yet, with
+      ready_only false, for counting), with nothing since. A limit
+      with no known reset (a model's own limit) is left out: resuming would
+      hit it again.
+
+    A session that was cleared, closed, reopened or messaged since is left
+    out. Each row: the 8-character session id, the desktop app's id and link
+    when known, the project folder, the title, when it stopped, and for a
+    limit its kind and reset time.
     """
+    now = time.time() if now is None else now
     rows: dict = {}
     for e in sorted((e for e in events if isinstance(e, dict)), key=lambda e: e.get("ts") or ""):
         sid = e.get("session")
@@ -550,12 +630,19 @@ def paused_sessions(events: list, links: dict, since: float) -> list:
         t = _event_time(e)
         if t is None:
             continue
-        row = rows.setdefault(sid, {"session": sid, "told": None, "stopped": None, "agent": None, "title": None})
+        row = rows.setdefault(sid, {"session": sid, "told": None, "stopped": None, "agent": None, "title": None,
+                                    "limit": None})
         if e.get("agent"):
             row["agent"] = e["agent"]
         if e.get("title"):
             row["title"] = e["title"]
         action, status = e.get("action"), e.get("status")
+        if action in ("Session closed", "Session opened", "Session resumed") or status == "started":
+            row["limit"] = None
+        if action == "Usage limit reached" and t >= now - _LIMIT_KEEP_SECONDS:
+            resets = _number(e.get("limit_resets"))
+            kind = e.get("limit") if e.get("limit") in _LIMIT_KIND_NAMES else "model"
+            row["limit"] = {"at": t, "kind": kind, "resets_at": resets}
         if action == "Time limit set" and e.get("pause") is True and t >= since:
             row["told"], row["stopped"] = t, None
         elif row["told"] is None:
@@ -567,17 +654,21 @@ def paused_sessions(events: list, links: dict, since: float) -> list:
             row["told"], row["stopped"] = None, None
     out = []
     for sid, row in rows.items():
-        if row["told"] is None or row["stopped"] is None:
+        lim = row["limit"]
+        if row["told"] is not None and row["stopped"] is not None:
+            extra = {"reason": "pause", "stopped_at": row["stopped"]}
+        elif lim is not None and (not ready_only or (lim["resets_at"] is not None and lim["resets_at"] <= now)):
+            extra = {"reason": "limit", "stopped_at": lim["at"], "limit": lim["kind"], "resets_at": lim["resets_at"]}
+        else:
             continue
         link = links.get(sid) if isinstance(links, dict) else None
-        out.append({
+        out.append(dict({
             "session": sid,
             "app": link.get("app") if isinstance(link, dict) else None,
             "web": link.get("web") if isinstance(link, dict) else None,
             "project": row["agent"],
             "title": row["title"],
-            "stopped_at": row["stopped"],
-        })
+        }, **extra))
     out.sort(key=lambda r: r["stopped_at"])
     return out
 

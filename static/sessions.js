@@ -192,6 +192,7 @@
         turnStartedAt: null, lastTurnMs: null, lastAt: null, openedAt: null,
         lastAction: null, lastStatus: null, bars: [], events: [], steps: null,
         pauseRequested: false, turnFinished: false, limitMs: null, limitStart: null, limitResult: null, pauseNotice: false,
+        usageLimit: null,
         summary: null
       };
       var open = {};      // approval_id -> {e, t}
@@ -227,6 +228,14 @@
         if (e.status === 'awaiting_approval' && e.approval_id) open[e.approval_id] = it;
         if (RESOLVED[e.status] && e.approval_id) delete open[e.approval_id];
 
+        // A usage limit ended the turn (StopFailure): it waits for the reset.
+        if (e.action === 'Usage limit reached') {
+          s.usageLimit = { kind: typeof e.limit === 'string' ? e.limit : 'model', at: t,
+                           resetsAt: typeof e.limit_resets === 'number' ? e.limit_resets * 1000 : null };
+        }
+        if (isTurnStart(e) || e.action === 'Session opened' || e.action === 'Session resumed' || e.action === 'Session closed') {
+          s.usageLimit = null;
+        }
         if (isTurnStart(e)) {
           s.turnStartedAt = t; s.doing = null; s.pauseRequested = e.pause === true; s.turnFinished = false;
           s.limitMs = typeof e.time_limit === 'number' ? e.time_limit * 1000 : null;
@@ -275,7 +284,10 @@
       } else if (last.status === 'failed') {
         s.state = 'error';
         s.since = lastT;
-        s.note = last.detail || last.result || 'The last task failed';
+        s.note = last.action === 'Stopped by an error'
+          ? 'Stopped by an API error' + (last.detail ? ' (' + String(last.detail).replace(/^error: /, '').replace(/_/g, ' ') + ')' : '') +
+            ' \u00b7 send a message to retry'
+          : last.detail || last.result || 'The last task failed';
       } else if (last.status === 'started' || RESOLVED[last.status]) {
         s.state = (now - lastT > QUIET_AFTER) ? 'quiet' : 'work';
         s.since = s.turnStartedAt !== null ? s.turnStartedAt : lastT;
@@ -302,6 +314,12 @@
         else { s.fresh = false; }  // Ready (or Idle once old), never Paused
       }
       if (s.limitMs && !s.turnFinished) s.limitLeft = s.limitStart + s.limitMs - now;
+
+      // Stopped by a usage limit: it waits for the reset, however long.
+      if (s.usageLimit && (s.state === 'turn' || s.state === 'idle')) {
+        s.state = 'paused';
+        s.fresh = false;
+      }
 
       // You asked it to pause and it reached a pause point: it waits, however
       // long, until your next message. Working toward that point shows as working.
@@ -423,6 +441,24 @@
     return 'Over the time limit by ' + dur(-s.limitLeft) + ' \u00b7 ';
   }
 
+  var LIMIT_WORD = { session: 'session limit', weekly: 'weekly limit', model: 'limit for this model' };
+
+  // "Fri 7:00 AM" when more than a day away, else "7:00 AM".
+  function resetClock(ms, now) {
+    var d = new Date(ms);
+    var opts = { hour: 'numeric', minute: '2-digit' };
+    if (Math.abs(ms - now) > 20 * 3600 * 1000) opts.weekday = 'short';
+    try { return d.toLocaleString([], opts); } catch (err) { return d.toISOString().slice(11, 16); }
+  }
+
+  function usageLine(u, now) {
+    var what = LIMIT_WORD[u.kind] || LIMIT_WORD.model;
+    if (u.resetsAt === null) return 'Stopped at the ' + what + ' \u00b7 switch model or wait for the reset';
+    if (u.resetsAt > now) return 'Stopped at your ' + what + ' \u00b7 resets ' + resetClock(u.resetsAt, now);
+    var ago = now - u.resetsAt < 45 * 1000 ? 'just reset' : 'reset ' + rel(now - u.resetsAt) + ' ago';
+    return 'Your ' + what + ' ' + ago + ' \u00b7 Resume all, or send a message';
+  }
+
   // The one-line "what is going on" for a row.
   function describe(s, now) {
     now = typeof now === 'number' ? now : Date.now();
@@ -441,6 +477,7 @@
         return (s.lastTurnMs !== null ? 'Finished a turn after ' + dur(s.lastTurnMs) : 'Finished a turn') +
           (s.steps && s.steps.done < s.steps.total ? ' · ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '');
       case 'paused':
+        if (s.usageLimit) return usageLine(s.usageLimit, now);
         return (s.limitResult === 'paused' ? (s.pauseNotice ? 'Paused for your time offline' : 'Paused at the ' + dur(s.limitMs) + ' time limit')
           : 'Paused at your request') +
           (s.steps && s.steps.done < s.steps.total ? ' \u00b7 ' + s.steps.done + ' of ' + s.steps.total + ' steps done' : '') +
@@ -465,6 +502,10 @@
       return 'Asked ' + (a.kind === 'Question' ? 'you a question' : 'permission to ' + a.text);
     }
     if (e.action === 'Pause requested') return 'You asked it to pause';
+    if (e.action === 'Usage limit reached') return 'Hit the ' + (LIMIT_WORD[e.limit] || LIMIT_WORD.model);
+    if (e.action === 'Stopped by an error') {
+      return 'Stopped by an API error' + (e.detail ? ' (' + String(e.detail).replace(/^error: /, '').replace(/_/g, ' ') + ')' : '');
+    }
     if (e.action === 'Time limit set') {
       return e.pause === true ? 'Told to save its work and stop within ' + dur(e.time_limit * 1000)
         : 'You set a ' + dur(e.time_limit * 1000) + ' time limit';
@@ -502,7 +543,7 @@
 
   return {
     deriveSessions: deriveSessions, cleanSummary: cleanSummary, describe: describe, projectName: projectName, compileNames: compileNames, eventLine: eventLine,
-    rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel, limitLabel: limitLabel,
+    rel: rel, dur: dur, toolAsk: toolAsk, stepLabel: stepLabel, limitLabel: limitLabel, usageLine: usageLine,
     QUIET_AFTER: QUIET_AFTER, IDLE_AFTER: IDLE_AFTER
   };
 }));

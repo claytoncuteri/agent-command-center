@@ -1385,3 +1385,96 @@ class TestClosingMessage(HookCase):
         path = self.history(*([self.said("old " * 2000)] * 200 + [self.said("The newest words.")]))
         self.assertGreater(os.path.getsize(path), hook._REPLY_TAIL_BYTES)
         self.assertEqual(hook.latest_reply(path), "The newest words.")
+
+
+class TestUsageLimitStops(HookCase):
+    """StopFailure: a usage limit ends the turn as a stop with its window and reset time; other errors as a failure."""
+
+    def setUp(self):
+        super().setUp()
+        self.home = os.path.join(self.tmp.name, "home")
+        self.proj = os.path.join(self.home, ".claude", "projects", "-p")
+        os.makedirs(self.proj)
+        self.home_patch = mock.patch.dict(os.environ, {"HOME": self.home})
+        self.home_patch.start()
+
+    def tearDown(self):
+        self.home_patch.stop()
+        super().tearDown()
+
+    def history(self, *recs):
+        path = os.path.join(self.proj, "s.jsonl")
+        with open(path, "w", encoding="utf-8") as f:
+            for r in recs:
+                f.write(json.dumps(r, separators=(",", ":")) + "\n")
+        return path
+
+    @staticmethod
+    def limit_record(kind="seven_day", resets=1793966400, text="You've hit your weekly limit " + SENTINEL):
+        q = None if kind is None else {"status": "rejected", "resetsAt": resets, "rateLimitType": kind}
+        return {"type": "assistant", "isApiErrorMessage": True, "error": "rate_limit", "quotaLimits": q,
+                "message": {"role": "assistant", "content": [{"type": "text", "text": text}]}}
+
+    def limit_file(self):
+        path = os.path.join(os.path.dirname(self.event_file), "usage-limit.json")
+        if not os.path.exists(path):
+            return None
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def test_weekly_limit(self):
+        path = self.history(self.limit_record("five_hour", 1793900000), self.limit_record("seven_day", 1793966400))
+        self.run_hook("UserPromptSubmit", prompt="go")
+        evs = self.run_hook("StopFailure", error="rate_limit", transcript_path=path)
+        e = evs[-1]
+        self.assertEqual((e["action"], e["status"], e["limit"], e["limit_resets"]),
+                         ("Usage limit reached", "finished", "weekly", 1793966400))
+        doc = self.limit_file()
+        self.assertEqual((doc["kind"], doc["resets_at"]), ("weekly", 1793966400))
+        self.assertNotIn(SENTINEL, self.raw())
+        self.assertNotIn(SENTINEL, json.dumps(doc))
+        self.assertNotIn("doing", hook.load_state("sess-0001-abcdef"))
+
+    def test_session_limit_and_model_limit(self):
+        path = self.history(self.limit_record("five_hour", 1793900000))
+        e = self.run_hook("StopFailure", error="rate_limit", transcript_path=path)[-1]
+        self.assertEqual((e["limit"], e["limit_resets"]), ("session", 1793900000))
+        path = self.history(self.limit_record(None))
+        e = self.run_hook("StopFailure", error="rate_limit", transcript_path=path)[-1]
+        self.assertEqual(e["limit"], "model")
+        self.assertNotIn("limit_resets", e)
+        self.assertNotIn("resets_at", self.limit_file())
+        path = self.history(self.limit_record("seven_day_opus", 1793966400))
+        self.assertEqual(self.run_hook("StopFailure", error="rate_limit", transcript_path=path)[-1]["limit"], "model")
+
+    def test_odd_reset_values_are_dropped(self):
+        for bad in ("soon", True, 12, 10**12):
+            path = self.history(self.limit_record("seven_day", bad))
+            e = self.run_hook("StopFailure", error="rate_limit", transcript_path=path)[-1]
+            self.assertEqual(e["limit"], "weekly", bad)
+            self.assertNotIn("limit_resets", e, bad)
+
+    def test_history_outside_projects_or_missing(self):
+        outside = os.path.join(self.tmp.name, "s.jsonl")
+        with open(outside, "w", encoding="utf-8") as f:
+            f.write(json.dumps(self.limit_record()) + "\n")
+        e = self.run_hook("StopFailure", error="rate_limit", transcript_path=outside)[-1]
+        self.assertEqual(e["limit"], "model")
+        e = self.run_hook("StopFailure", error="rate_limit")[-1]
+        self.assertEqual(e["action"], "Usage limit reached")
+
+    def test_other_errors_are_a_failed_stop(self):
+        evs = self.run_hook("StopFailure", error="server_error")
+        self.assertEqual((evs[-1]["action"], evs[-1]["status"], evs[-1]["detail"]),
+                         ("Stopped by an error", "failed", "error: server_error"))
+        evs = self.run_hook("StopFailure", error="something " + SENTINEL)
+        self.assertEqual(evs[-1]["detail"], "error: unknown")
+        self.assertNotIn(SENTINEL, self.raw())
+        self.assertIsNone(self.limit_file(), "only a usage limit writes the limit file")
+
+    def test_open_prompt_is_closed(self):
+        self.run_hook("PermissionRequest", tool_name="Bash")
+        evs = self.run_hook("StopFailure", error="rate_limit")
+        self.assertEqual([e["action"] for e in evs[-2:]][-1], "Usage limit reached")
+        self.assertIn("declined", [e["status"] for e in evs])
+        self.assertNotIn("open", hook.load_state("sess-0001-abcdef"))
