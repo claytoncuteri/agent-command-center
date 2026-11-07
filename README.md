@@ -288,6 +288,7 @@ project reports). Merge this into any `hooks` block you already have:
     "PostToolUse":        [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
     "PostToolUseFailure": [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "async": true}]}],
     "Stop":               [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
+    "StopFailure":        [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}],
     "SessionEnd":         [{"hooks": [{"type": "command", "command": "python3 \"$HOME/.claude/hooks/acc_claude_code_hook.py\"", "timeout": 5}]}]
   }
 }
@@ -356,6 +357,40 @@ and reports the count through `POST /api/resume/done`, which the control
 shows ("6 sessions resumed at 9:14"). The button press is the consent: every
 resumed session starts a turn. Without a bridge the button still ends the
 pause; the stopped sessions then wait for your own message, as before.
+
+### Usage limits: one button after the reset
+
+When a subscription limit runs out mid-turn (the 5-hour session limit, the
+weekly limit, or a model's own limit), Claude Code ends the turn with an API
+error, and the normal `Stop` hook does not fire: it fires `StopFailure`
+instead. Register the hook for `StopFailure` (above) and each such session
+shows as **Paused**, "Stopped at your weekly limit · resets Fri 7:00 AM",
+instead of "Working" with no end. Other API errors (a dropped connection, an
+overloaded server) show as a plain stop with the error's type, so a session
+never looks busy after it has quit.
+
+The hook reads the reset time from the history file's newest error record
+(the structured `quotaLimits` field: which window and when it resets, never
+the message text) and writes the latest limit to `usage-limit.json` beside
+the event file. The pause control then shows "Weekly limit · resets Fri 7:00
+AM · 7 sessions stopped", and at the reset time its button becomes **Resume
+all 7**. The press goes through the same bridge session as the offline
+Resume all; `GET /api/paused` lists these sessions with reason `limit`, and
+the bridge sends each a fixed "the usage limit that stopped you has reset,
+carry on" message. A model's own limit has no reset time in the record, so
+those sessions are not resumed: switch them to another model.
+
+The desktop app can continue a session by itself after the 5-hour limit (the
+"Auto-continue when limits reset" box on the limit card), but not after the
+weekly limit, and only one session at a time; this button covers both, for
+every stopped session at once. A session that already carried on by itself
+is left out, since it has newer events.
+
+The bridge's wait has no time limit and touches `bridge.alive` every few
+seconds, so the control shows "Bridge armed" or "Bridge not running" beside
+every Resume button. A wait that woke the bridge on a timer would cost a turn
+each time, and a turn cannot run during a limit, so an hourly timer could
+leave nobody standing by exactly when the button is needed.
 
 ### Project names
 
